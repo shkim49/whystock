@@ -1,0 +1,49 @@
+<svg width="1200" height="675" viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">WhyStock dashboard visual</title>
+  <desc id="desc">A structured stock movement analysis dashboard with price, evidence, confidence, and scenario panels.</desc>
+  <rect width="1200" height="675" fill="#f6f8fb"/>
+  <rect x="72" y="68" width="1056" height="539" rx="28" fill="#ffffff" stroke="#d7dee8"/>
+  <rect x="104" y="104" width="246" height="467" rx="14" fill="#111827"/>
+  <rect x="130" y="132" width="148" height="16" rx="8" fill="#f9fafb"/>
+  <rect x="130" y="172" width="188" height="42" rx="8" fill="#263244"/>
+  <rect x="130" y="228" width="188" height="42" rx="8" fill="#263244"/>
+  <rect x="130" y="284" width="188" height="42" rx="8" fill="#374151"/>
+  <rect x="130" y="340" width="188" height="42" rx="8" fill="#263244"/>
+  <circle cx="148" cy="193" r="6" fill="#21a67a"/>
+  <circle cx="148" cy="249" r="6" fill="#e25555"/>
+  <circle cx="148" cy="305" r="6" fill="#21a67a"/>
+  <circle cx="148" cy="361" r="6" fill="#e2a93b"/>
+  <rect x="384" y="106" width="360" height="206" rx="16" fill="#f8fafc" stroke="#dbe3ed"/>
+  <rect x="414" y="136" width="126" height="16" rx="8" fill="#1f2937"/>
+  <rect x="414" y="174" width="288" height="90" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <polyline points="434,238 470,218 506,228 542,184 578,196 614,156 650,170 684,142" fill="none" stroke="#21a67a" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="414" y="280" width="88" height="10" rx="5" fill="#21a67a"/>
+  <rect x="518" y="280" width="88" height="10" rx="5" fill="#d1d9e6"/>
+  <rect x="622" y="280" width="60" height="10" rx="5" fill="#d1d9e6"/>
+  <rect x="776" y="106" width="298" height="206" rx="16" fill="#f8fafc" stroke="#dbe3ed"/>
+  <rect x="804" y="136" width="152" height="16" rx="8" fill="#1f2937"/>
+  <rect x="804" y="174" width="236" height="26" rx="6" fill="#ffffff" stroke="#dbe3ed"/>
+  <rect x="804" y="214" width="236" height="26" rx="6" fill="#ffffff" stroke="#dbe3ed"/>
+  <rect x="804" y="254" width="236" height="26" rx="6" fill="#ffffff" stroke="#dbe3ed"/>
+  <circle cx="824" cy="187" r="7" fill="#21a67a"/>
+  <circle cx="824" cy="227" r="7" fill="#e2a93b"/>
+  <circle cx="824" cy="267" r="7" fill="#e25555"/>
+  <path d="M744 209 C758 209 762 209 776 209" stroke="#8492a6" stroke-width="3" stroke-dasharray="7 8"/>
+  <rect x="384" y="344" width="322" height="184" rx="16" fill="#f8fafc" stroke="#dbe3ed"/>
+  <rect x="414" y="374" width="132" height="16" rx="8" fill="#1f2937"/>
+  <rect x="414" y="412" width="232" height="18" rx="9" fill="#ffffff" stroke="#dbe3ed"/>
+  <rect x="414" y="448" width="206" height="18" rx="9" fill="#ffffff" stroke="#dbe3ed"/>
+  <rect x="414" y="484" width="250" height="18" rx="9" fill="#ffffff" stroke="#dbe3ed"/>
+  <circle cx="432" cy="421" r="6" fill="#21a67a"/>
+  <circle cx="432" cy="457" r="6" fill="#21a67a"/>
+  <circle cx="432" cy="493" r="6" fill="#21a67a"/>
+  <rect x="738" y="344" width="336" height="184" rx="16" fill="#f8fafc" stroke="#dbe3ed"/>
+  <rect x="768" y="374" width="154" height="16" rx="8" fill="#1f2937"/>
+  <rect x="768" y="414" width="122" height="72" rx="10" fill="#ffffff" stroke="#dbe3ed"/>
+  <rect x="914" y="414" width="122" height="72" rx="10" fill="#ffffff" stroke="#dbe3ed"/>
+  <path d="M801 462 C824 430 852 444 862 424" fill="none" stroke="#21a67a" stroke-width="5" stroke-linecap="round"/>
+  <path d="M944 430 C964 468 996 452 1010 482" fill="none" stroke="#e25555" stroke-width="5" stroke-linecap="round"/>
+  <rect x="458" y="552" width="522" height="18" rx="9" fill="#edf2f7"/>
+  <rect x="458" y="552" width="386" height="18" rx="9" fill="#21a67a"/>
+</svg>
+
