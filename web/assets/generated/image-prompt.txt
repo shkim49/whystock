@@ -2,11 +2,10 @@ Use case: productivity-visual
 Asset type: web app dashboard visual for a Korean stock-movement explanation AI service
 Primary request: Create a polished editorial dashboard scene that visually represents an AI system connecting a stock price move to news, disclosure, and volume evidence.
 Scene/backdrop: clean financial research workspace, not a trading floor
-Subject: abstract dashboard panels showing a stock candlestick movement, evidence links, source confidence, and an AI summary node
+Subject: abstract dashboard panels showing a stock candlestick movement, evidence links, source references, and an AI summary node
 Style/medium: premium digital product illustration, crisp raster image, realistic UI depth but no real company logos
 Composition/framing: wide 16:9 composition, usable as a compact in-app banner, dense but readable, no large marketing hero layout
 Lighting/mood: calm, analytical, professional
-Color palette: neutral graphite, white, muted teal, red accent for drop, green accent for rise, small amber confidence markers
+Color palette: neutral graphite, white, muted teal, red accent for drop, green accent for rise, small amber evidence markers
 Text: no readable text, no logos, no ticker symbols
 Constraints: avoid investment-promise imagery, avoid people, avoid coins, avoid rockets, avoid luxury objects, avoid clutter, avoid gradients as the main subject
-

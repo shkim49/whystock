@@ -2,8 +2,11 @@ const state = {
   events: [],
   selectedEventId: null,
   detail: null,
+  watchlist: [],
 };
 
+const MOVERS_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const WATCHLIST_KEY = "whystock.watchlist";
 const nodes = {};
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -23,9 +26,12 @@ document.addEventListener("DOMContentLoaded", () => {
     "dataBasis",
     "basisNote",
     "analyzeButton",
+    "watchButton",
     "summaryText",
     "reasonList",
-    "scenarioList",
+    "materialTagList",
+    "newsTimelineList",
+    "watchlistList",
     "sourceList",
     "relatedList",
     "termButtons",
@@ -36,12 +42,19 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   bindEvents();
+  loadWatchlist();
   preferGeneratedPng();
   loadMovers();
+  setInterval(() => {
+    loadMovers({ preserveSelection: true, silent: true }).catch((error) => {
+      console.error("Failed to refresh mover events", error);
+    });
+  }, MOVERS_REFRESH_INTERVAL_MS);
 });
 
 function bindEvents() {
   nodes.analyzeButton.addEventListener("click", rerunAnalysis);
+  nodes.watchButton.addEventListener("click", toggleCurrentWatch);
   nodes.stockSearch.addEventListener("input", debounce(searchStocks, 220));
 }
 
@@ -54,15 +67,29 @@ function preferGeneratedPng() {
   probe.src = `/assets/generated/why-stock-hero.png?probe=${Date.now()}`;
 }
 
-async function loadMovers() {
-  setLoading("급등락 이벤트를 불러오는 중입니다.");
+async function loadMovers(options = {}) {
+  if (!options.silent) {
+    setLoading("급등락 이벤트를 불러오는 중입니다.");
+  }
+  const previousEventId = state.selectedEventId;
   const data = await fetchJson("/api/events/movers");
   state.events = data.events;
   nodes.asOfText.textContent = `기준 ${formatTime(data.as_of)}`;
   nodes.eventCount.textContent = String(data.events.length);
   renderMovers();
 
-  if (state.events.length > 0) {
+  if (state.events.length === 0) {
+    return;
+  }
+
+  if (options.preserveSelection && previousEventId?.startsWith("briefing-")) {
+    return;
+  }
+
+  const selectedStillExists = state.events.some((event) => event.id === previousEventId);
+  if (options.preserveSelection && selectedStillExists) {
+    await selectEvent(previousEventId);
+  } else if (!options.preserveSelection) {
     await selectEvent(state.events[0].id);
   }
 }
@@ -87,9 +114,13 @@ async function selectStockBriefing(ticker) {
 function setLoading(message) {
   nodes.eventTitle.textContent = "불러오는 중";
   nodes.eventSubtitle.textContent = message;
+  nodes.basisNote.textContent = "";
+  nodes.basisNote.hidden = true;
   nodes.summaryText.textContent = "";
   nodes.reasonList.innerHTML = "";
-  nodes.scenarioList.innerHTML = "";
+  nodes.materialTagList.innerHTML = "";
+  nodes.newsTimelineList.innerHTML = "";
+  nodes.watchlistList.innerHTML = "";
   nodes.sourceList.innerHTML = "";
   nodes.relatedList.innerHTML = "";
   nodes.termButtons.innerHTML = "";
@@ -121,7 +152,17 @@ function renderMovers() {
 }
 
 function renderDetail() {
-  const { event, stock, analysis, sources, related_stocks: relatedStocks, data_basis: dataBasis, terms } = state.detail;
+  const {
+    event,
+    stock,
+    analysis,
+    sources,
+    related_stocks: relatedStocks,
+    data_basis: dataBasis,
+    news_timeline: newsTimeline,
+    material_tags: materialTags,
+    terms,
+  } = state.detail;
   const changeClass = Number(event.change_rate) >= 0 ? "up" : "down";
   const modeLabel = event.event_type === "surge" ? "상승 이유" : event.event_type === "drop" ? "하락 이유" : "시장 브리핑";
 
@@ -135,14 +176,17 @@ function renderDetail() {
   nodes.changeRate.className = changeClass;
   nodes.volumeChange.textContent = formatPercent(event.volume_change_rate);
   nodes.dataBasis.textContent = dataBasis?.label || `${sources.length}건`;
-  nodes.basisNote.textContent =
-    dataBasis?.note ||
-    "신뢰점수는 임의 산식이 될 수 있어 제거했고, 실제 시세 출처와 근거 링크를 기준으로 보여줍니다.";
+  const basisNote = dataBasis?.note || "";
+  nodes.basisNote.textContent = basisNote;
+  nodes.basisNote.hidden = !basisNote;
   nodes.summaryText.textContent = analysis?.summary || "아직 분석 결과가 없습니다.";
   nodes.disclaimerText.textContent = analysis?.disclaimer || "투자 추천이 아닌 정보 요약입니다.";
+  renderWatchButton(stock);
 
   renderReasons(analysis?.reasons || [], sources);
-  renderScenarios(analysis?.scenarios || []);
+  renderMaterialTags(materialTags || []);
+  renderNewsTimeline(newsTimeline || []);
+  renderWatchlist();
   renderSources(sources);
   renderRelated(relatedStocks || []);
   renderTerms(terms || []);
@@ -177,21 +221,43 @@ function renderReasons(reasons, sources) {
   });
 }
 
-function renderScenarios(scenarios) {
-  nodes.scenarioList.innerHTML = "";
-  if (scenarios.length === 0) {
-    nodes.scenarioList.innerHTML = `<div class="empty">시나리오가 없습니다.</div>`;
+function renderMaterialTags(tags) {
+  nodes.materialTagList.innerHTML = "";
+  if (tags.length === 0) {
+    nodes.materialTagList.innerHTML = `<div class="empty">감지된 재료가 없습니다.</div>`;
     return;
   }
 
-  scenarios.forEach((scenario) => {
-    const card = document.createElement("div");
-    card.className = "scenario";
-    card.innerHTML = `
-      <strong>${escapeHtml(scenario.title)}</strong>
-      <p>${escapeHtml(scenario.condition)}</p>
+  tags.forEach((tag) => {
+    const item = document.createElement("div");
+    item.className = "material-tag";
+    item.innerHTML = `
+      <strong>${escapeHtml(tag.label)}</strong>
+      <p>${escapeHtml(tag.description)}</p>
     `;
-    nodes.scenarioList.appendChild(card);
+    nodes.materialTagList.appendChild(item);
+  });
+}
+
+function renderNewsTimeline(items) {
+  nodes.newsTimelineList.innerHTML = "";
+  if (items.length === 0) {
+    nodes.newsTimelineList.innerHTML = `<div class="empty">관련 뉴스가 없습니다.</div>`;
+    return;
+  }
+
+  items.forEach((news) => {
+    const item = document.createElement("a");
+    item.className = "timeline-item";
+    item.href = news.url;
+    item.target = "_blank";
+    item.rel = "noopener noreferrer";
+    item.innerHTML = `
+      <span>${escapeHtml(formatTime(news.published_at))} · ${escapeHtml(news.publisher)}</span>
+      <strong>${escapeHtml(news.title)}</strong>
+      <p>${escapeHtml(news.summary)}</p>
+    `;
+    nodes.newsTimelineList.appendChild(item);
   });
 }
 
@@ -230,9 +296,69 @@ function renderRelated(relatedStocks) {
     item.addEventListener("click", () => selectStockBriefing(stock.ticker));
     item.innerHTML = `
       <strong>${escapeHtml(stock.name)} <span class="chip">${escapeHtml(stock.ticker)}</span></strong>
+      ${stock.theme ? `<div class="related-theme">${escapeHtml(stock.theme)}</div>` : ""}
       <p>${escapeHtml(stock.reason)}</p>
     `;
     nodes.relatedList.appendChild(item);
+  });
+}
+
+function loadWatchlist() {
+  try {
+    state.watchlist = JSON.parse(localStorage.getItem(WATCHLIST_KEY) || "[]");
+  } catch {
+    state.watchlist = [];
+  }
+  renderWatchlist();
+}
+
+function saveWatchlist() {
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(state.watchlist));
+}
+
+function toggleCurrentWatch() {
+  const stock = state.detail?.stock;
+  if (!stock) return;
+  const exists = state.watchlist.some((item) => item.ticker === stock.ticker);
+  if (exists) {
+    state.watchlist = state.watchlist.filter((item) => item.ticker !== stock.ticker);
+  } else {
+    state.watchlist.unshift({
+      ticker: stock.ticker,
+      name: stock.name,
+      market: stock.market,
+      sector: stock.sector,
+    });
+  }
+  state.watchlist = state.watchlist.slice(0, 8);
+  saveWatchlist();
+  renderWatchButton(stock);
+  renderWatchlist();
+}
+
+function renderWatchButton(stock) {
+  const watched = state.watchlist.some((item) => item.ticker === stock.ticker);
+  nodes.watchButton.setAttribute("aria-pressed", watched ? "true" : "false");
+  nodes.watchButton.title = watched ? "관심종목 제거" : "관심종목 저장";
+}
+
+function renderWatchlist() {
+  if (!nodes.watchlistList) return;
+  nodes.watchlistList.innerHTML = "";
+  if (state.watchlist.length === 0) {
+    nodes.watchlistList.innerHTML = `<div class="empty">저장된 종목이 없습니다.</div>`;
+    return;
+  }
+  state.watchlist.forEach((stock) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "watch-item";
+    item.innerHTML = `
+      <strong>${escapeHtml(stock.name)} <span>${escapeHtml(stock.ticker)}</span></strong>
+      <p>${escapeHtml(stock.market)} · ${escapeHtml(stock.sector)}</p>
+    `;
+    item.addEventListener("click", () => selectStockBriefing(stock.ticker));
+    nodes.watchlistList.appendChild(item);
   });
 }
 

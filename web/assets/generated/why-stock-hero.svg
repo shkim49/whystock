@@ -1,6 +1,6 @@
 <svg width="1200" height="675" viewBox="0 0 1200 675" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">WhyStock dashboard visual</title>
-  <desc id="desc">A structured stock movement analysis dashboard with price, evidence, confidence, and scenario panels.</desc>
+  <desc id="desc">A structured stock movement analysis dashboard with price, evidence, source links, news timeline, and material tags.</desc>
   <rect width="1200" height="675" fill="#f6f8fb"/>
   <rect x="72" y="68" width="1056" height="539" rx="28" fill="#ffffff" stroke="#d7dee8"/>
   <rect x="104" y="104" width="246" height="467" rx="14" fill="#111827"/>
@@ -46,4 +46,3 @@
   <rect x="458" y="552" width="522" height="18" rx="9" fill="#edf2f7"/>
   <rect x="458" y="552" width="386" height="18" rx="9" fill="#21a67a"/>
 </svg>
-

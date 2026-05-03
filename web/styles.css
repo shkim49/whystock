@@ -401,6 +401,18 @@ button {
   opacity: 0.55;
 }
 
+.icon-button[aria-pressed="true"] {
+  color: var(--amber);
+  border-color: #ead19d;
+  background: #fff7e6;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .summary {
   margin: 14px 0 16px;
   line-height: 1.6;
@@ -465,7 +477,9 @@ button {
   background: #fff7e6;
 }
 
-.scenario-list,
+.material-tag-list,
+.timeline-list,
+.watchlist-list,
 .source-list,
 .related-list {
   display: grid;
@@ -473,13 +487,39 @@ button {
   margin-top: 14px;
 }
 
-.scenario,
+.insight-panel {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.mini-section + .mini-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.material-tag,
+.timeline-item,
+.watch-item,
 .source,
 .related {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   background: #fff;
+}
+
+.timeline-item {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.watch-item {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  white-space: normal;
 }
 
 .source-link {
@@ -500,14 +540,18 @@ button {
   white-space: normal;
 }
 
-.scenario strong,
+.material-tag strong,
+.timeline-item strong,
+.watch-item strong,
 .source strong,
 .related strong {
   display: block;
   margin-bottom: 6px;
 }
 
-.scenario p,
+.material-tag p,
+.timeline-item p,
+.watch-item p,
 .source p,
 .related p {
   margin: 0;
@@ -515,6 +559,30 @@ button {
   line-height: 1.5;
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.timeline-item span,
+.watch-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.material-tag {
+  border-color: #c7e4e7;
+  background: #f4fbfc;
+}
+
+.related-theme {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  margin: 0 0 8px;
+  background: #eef8f8;
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .source-meta {
@@ -545,6 +613,8 @@ button {
 .search-result:hover,
 .mover-item:hover,
 .icon-button:hover,
+.timeline-item:hover,
+.watch-item:hover,
 .related-button:hover {
   border-color: var(--line-strong);
   background: #f9fbfd;
@@ -658,7 +728,9 @@ button {
   .subtitle,
   .summary,
   .reason-card p,
-  .scenario p,
+  .material-tag p,
+  .timeline-item p,
+  .watch-item p,
   .source p,
   .related p,
   .term-explanation {
