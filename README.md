@@ -2,6 +2,8 @@
 
 급등락한 국내 주식의 실제 시세, 뉴스, 공시 링크를 묶어 주가 변동의 이유를 빠르게 요약하는 MVP 웹 서비스입니다.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/shkim49/whystock)
+
 ## Requirements
 
 - Python 3.10+
