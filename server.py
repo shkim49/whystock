@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import email.utils
 import html
+import http.client
 import json
 import mimetypes
 import os
@@ -27,9 +29,24 @@ NAVER_HEADERS = {
     "Accept": "application/json,text/xml,application/xml,text/html;q=0.9,*/*;q=0.8",
 }
 
+TRANSIENT_FETCH_ERRORS = (
+    urllib.error.URLError,
+    TimeoutError,
+    http.client.HTTPException,
+    ConnectionError,
+    OSError,
+)
+TRANSIENT_PARSE_ERRORS = TRANSIENT_FETCH_ERRORS + (ValueError, json.JSONDecodeError)
+TRANSIENT_XML_ERRORS = TRANSIENT_FETCH_ERRORS + (ET.ParseError,)
+
 CATALOG_CACHE: dict[str, Any] = {"loaded_at": 0.0, "stocks": []}
 BRIEFING_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-CACHE_TTL_SECONDS = 600
+TRENDING_CACHE: dict[str, Any] = {"loaded_at": 0.0, "payload": None}
+TERM_EXPLANATION_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+CACHE_TTL_SECONDS = 60
+TRENDING_CACHE_TTL_SECONDS = 180
+TERM_CACHE_TTL_SECONDS = 3600
+TRENDING_CANDIDATE_LIMIT = 18
 
 SECTOR_OVERRIDES = {
     "005930": "반도체",
@@ -55,6 +72,10 @@ TERM_EXPLANATIONS = {
     "전일 대비": "직전 거래일 종가와 비교했다는 뜻입니다. 휴장일이 있으면 오늘이 아니라 마지막 거래일 기준일 수 있습니다.",
     "공시": "상장사가 투자자에게 알려야 하는 중요 정보를 공식적으로 공개한 자료입니다. 뉴스보다 원문 근거로 쓰기 좋습니다.",
     "DART": "금융감독원 전자공시시스템입니다. 기업의 사업보고서, 주요사항보고서, 실적 관련 공시를 확인할 수 있습니다.",
+    "IR": "Investor Relations의 약자로, 기업이 투자자와 애널리스트에게 실적과 사업 계획을 설명하는 활동입니다.",
+    "기업설명회": "기업이 투자자나 기관을 대상으로 사업 현황과 전망을 설명하는 자리입니다. 보통 IR 일정과 함께 공시됩니다.",
+    "분기보고서": "상장사가 분기별 실적과 재무 상태를 정리해 제출하는 공시 문서입니다.",
+    "AI": "인공지능을 뜻합니다. 반도체, 소프트웨어, 로봇, 데이터센터 같은 산업 기대와 함께 자주 묶여 움직입니다.",
     "시가총액": "주가에 상장 주식 수를 곱한 값입니다. 기업의 시장 규모를 비교할 때 사용합니다.",
     "PER": "주가를 주당순이익으로 나눈 값입니다. 시장이 이익 대비 어느 정도 가격을 매기는지 볼 때 사용합니다.",
     "EPS": "주당순이익입니다. 기업 순이익을 발행 주식 수로 나눈 값입니다.",
@@ -123,6 +144,54 @@ ANALYSIS_SCHEMA = {
         "disclaimer": {"type": "string"},
     },
 }
+
+TERM_EXPLANATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["terms"],
+    "properties": {
+        "terms": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["term", "definition", "why_it_matters"],
+                "properties": {
+                    "term": {"type": "string"},
+                    "definition": {"type": "string"},
+                    "why_it_matters": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
+TERM_KEYWORD_HINTS = (
+    "HBM",
+    "IR",
+    "CAPEX",
+    "EPS",
+    "PER",
+    "XBRL",
+    "DART",
+    "AI 서버",
+    "데이터센터",
+    "거래대금",
+    "거래량",
+    "컨센서스",
+    "가이던스",
+    "분기보고서",
+    "반기보고서",
+    "사업보고서",
+    "자기주식처분",
+    "유상증자",
+    "전환사채",
+    "공급계약",
+    "기업설명회",
+    "실적",
+    "영업이익",
+)
 
 
 SECTOR_THEMES = [
@@ -214,7 +283,7 @@ def fetch_json(url: str, timeout: int = 8) -> Any:
 
 
 def fetch_form(url: str, data: dict[str, Any], timeout: int = 8) -> str:
-    encoded = urllib.parse.urlencode(data).encode("utf-8")
+    encoded = urllib.parse.urlencode(data, doseq=True).encode("utf-8")
     headers = {**NAVER_HEADERS, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
     request = urllib.request.Request(url, data=encoded, headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -252,6 +321,9 @@ def stock_from_naver(raw: dict[str, Any]) -> dict[str, Any]:
         "end_url": raw.get("endUrl") or f"https://m.stock.naver.com/domestic/stock/{ticker}",
         "current_price": parse_int(raw.get("closePriceRaw") or raw.get("closePrice")),
         "change_rate": parse_number(raw.get("fluctuationsRatio")),
+        "accumulated_trading_volume": parse_int(raw.get("accumulatedTradingVolumeRaw") or raw.get("accumulatedTradingVolume")),
+        "accumulated_trading_value": parse_int(raw.get("accumulatedTradingValueRaw") or raw.get("accumulatedTradingValue")),
+        "market_value": parse_int(raw.get("marketValue") or raw.get("marketValueRaw") or raw.get("marketCapRaw")),
         "traded_at": raw.get("localTradedAt"),
         "stock_end_type": raw.get("stockEndType", "stock"),
     }
@@ -274,6 +346,39 @@ def fallback_catalog() -> list[dict[str, Any]]:
         ("012450", "한화에어로스페이스", "KOSPI", "방산/항공"),
         ("034020", "두산에너빌리티", "KOSPI", "에너지/원전"),
     ]
+    base_change_rates = [2.4, 1.7, 3.2, -1.1, -2.8, 4.5, -0.9, 1.3, 2.1, 5.4, 4.8, 6.2, 3.7, 2.9]
+    base_values = [
+        920_000_000_000,
+        610_000_000_000,
+        280_000_000_000,
+        190_000_000_000,
+        140_000_000_000,
+        210_000_000_000,
+        160_000_000_000,
+        130_000_000_000,
+        115_000_000_000,
+        95_000_000_000,
+        88_000_000_000,
+        155_000_000_000,
+        175_000_000_000,
+        120_000_000_000,
+    ]
+    base_market_values = [
+        470_000_000_000_000,
+        150_000_000_000_000,
+        42_000_000_000_000,
+        31_000_000_000_000,
+        18_000_000_000_000,
+        95_000_000_000_000,
+        36_000_000_000_000,
+        68_000_000_000_000,
+        34_000_000_000_000,
+        23_000_000_000_000,
+        19_000_000_000_000,
+        11_000_000_000_000,
+        31_000_000_000_000,
+        22_000_000_000_000,
+    ]
     return [
         {
             "id": ticker,
@@ -282,12 +387,15 @@ def fallback_catalog() -> list[dict[str, Any]]:
             "market": market,
             "sector": sector,
             "end_url": f"https://m.stock.naver.com/domestic/stock/{ticker}",
-            "current_price": None,
-            "change_rate": None,
+            "current_price": 50_000 + index * 7_500,
+            "change_rate": base_change_rates[index],
+            "accumulated_trading_volume": 1_200_000 + index * 180_000,
+            "accumulated_trading_value": base_values[index],
+            "market_value": base_market_values[index],
             "traded_at": None,
             "stock_end_type": "stock",
         }
-        for ticker, name, market, sector in rows
+        for index, (ticker, name, market, sector) in enumerate(rows)
     ]
 
 
@@ -357,7 +465,7 @@ def fetch_news_items(stock_name: str, limit: int = 4) -> list[dict[str, Any]]:
     try:
         xml_text = fetch_text(url, timeout=8)
         root = ET.fromstring(xml_text)
-    except (urllib.error.URLError, TimeoutError, ET.ParseError):
+    except TRANSIENT_XML_ERRORS:
         return []
 
     items: list[dict[str, Any]] = []
@@ -381,6 +489,28 @@ def fetch_news_items(stock_name: str, limit: int = 4) -> list[dict[str, Any]]:
         if len(items) >= limit:
             break
     return items
+
+
+def parse_news_published_at(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def fetch_news_count(stock_name: str, limit: int = 100, hours: int = 24) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    count = 0
+    for item in fetch_news_items(stock_name, limit=limit):
+        published_at = parse_news_published_at(item.get("published_at", ""))
+        if published_at and published_at >= cutoff:
+            count += 1
+    return count
 
 
 def strip_html(value: str) -> str:
@@ -465,7 +595,7 @@ def fetch_disclosure_body_excerpt(rcp_no: str) -> str:
         return ""
     try:
         text = fetch_text(f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcp_no}", timeout=8)
-    except (urllib.error.URLError, TimeoutError):
+    except TRANSIENT_FETCH_ERRORS:
         return ""
     plain = strip_html(text)
     sentences = re.split(r"(?<=[.다요음])\s+", plain)
@@ -522,20 +652,142 @@ def parse_dart_recent_rows(html_text: str, company_name: str) -> list[dict[str, 
     return disclosures
 
 
+def fetch_dart_company_info(ticker: str) -> dict[str, str] | None:
+    try:
+        html_text = fetch_form(
+            "https://dart.fss.or.kr/corp/searchCorpL.ax",
+            {
+                "textCrpNm": ticker,
+                "currentPage": 1,
+                "corpType": ["P", "A", "X", "E"],
+                "corpTypeAll": "all",
+            },
+            timeout=10,
+        )
+    except TRANSIENT_FETCH_ERRORS:
+        return None
+
+    cik_match = re.search(r"name='hiddenCikCD1' value='(\d+)'", html_text)
+    name_match = re.search(r"name='hiddenCikNM1' value='([^']+)'", html_text)
+    if not cik_match or not name_match:
+        return None
+
+    return {
+        "cik": cik_match.group(1),
+        "name": html.unescape(name_match.group(1)),
+    }
+
+
+def parse_dart_detail_search_rows(html_text: str) -> list[dict[str, str]]:
+    disclosures: list[dict[str, str]] = []
+    rows = re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", html_text)
+    for row in rows:
+        cells = re.findall(r"(?is)<td\b[^>]*>(.*?)</td>", row)
+        if len(cells) < 5:
+            continue
+
+        report_match = re.search(r'href="/dsaf001/main\.do\?rcpNo=(\d+)"[^>]*>(.*?)</a>', cells[2], re.I | re.S)
+        if not report_match:
+            continue
+
+        company = strip_html(cells[1])
+        title = strip_html(report_match.group(2))
+        published_at = strip_html(cells[4])
+        presenter = strip_html(cells[3])
+        rcp_no = report_match.group(1)
+        if not title or not rcp_no:
+            continue
+
+        disclosures.append(
+            {
+                "title": title,
+                "company": company,
+                "published_at": published_at,
+                "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcp_no}",
+                "rcp_no": rcp_no,
+                "presenter": presenter,
+            }
+        )
+        if len(disclosures) >= 3:
+            break
+    return disclosures
+
+
+def fetch_dart_disclosures_by_company(stock: dict[str, Any], event: dict[str, Any]) -> list[dict[str, str]]:
+    company_info = fetch_dart_company_info(stock["ticker"])
+    if not company_info:
+        return []
+
+    event_date = event.get("detected_at") or now_iso()
+    try:
+        end_date = datetime.fromisoformat(event_date.replace("Z", "+00:00")).date()
+    except ValueError:
+        end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=365)
+
+    try:
+        html_text = fetch_form(
+            "https://dart.fss.or.kr/dsab007/detailSearch.ax",
+            {
+                "option": "corp",
+                "currentPage": 1,
+                "maxResults": 15,
+                "maxLinks": 10,
+                "sort": "date",
+                "series": "desc",
+                "textCrpCik": company_info["cik"],
+                "lateKeyword": "",
+                "keyword": "",
+                "reportNamePopYn": "",
+                "textkeyword": "",
+                "businessCode": "all",
+                "autoSearch": "N",
+                "autoSearchCorp": "Y",
+                "textCrpNm": company_info["name"],
+                "reportName": "",
+                "tocSrch": "",
+                "textCrpNm2": "",
+                "textPresenterNm": "",
+                "startDate": start_date.strftime("%Y%m%d"),
+                "endDate": end_date.strftime("%Y%m%d"),
+                "finalReport": "recent",
+                "businessNm": "",
+                "reportName2": "",
+                "tocSrch2": "",
+                "corporationType": "all",
+                "closingAccountsMonth": "all",
+                "decadeType": "",
+            },
+            timeout=12,
+        )
+    except TRANSIENT_FETCH_ERRORS:
+        return []
+
+    return parse_dart_detail_search_rows(html_text)
+
+
 def fetch_dart_disclosures(stock: dict[str, Any], event: dict[str, Any]) -> list[dict[str, str]]:
+    found = fetch_dart_disclosures_by_company(stock, event)
+    if found:
+        for disclosure in found:
+            body_excerpt = fetch_disclosure_body_excerpt(disclosure.get("rcp_no", ""))
+            disclosure["summary"] = disclosure_summary_from_title(disclosure["title"], disclosure["company"])
+            disclosure["key_sentence"] = body_excerpt or disclosure["summary"]
+        return found[:3]
+
     event_date = event.get("detected_at") or now_iso()
     try:
         cursor = datetime.fromisoformat(event_date.replace("Z", "+00:00")).date()
     except ValueError:
         cursor = datetime.now().date()
 
-    found: list[dict[str, str]] = []
+    found = []
     for offset in range(0, 8):
         select_date = (cursor - timedelta(days=offset)).strftime("%Y%m%d")
         page_texts = []
         try:
             page_texts.append(fetch_text(f"https://dart.fss.or.kr/dsac001/mainAll.do?selectDate={select_date}", timeout=10))
-        except (urllib.error.URLError, TimeoutError):
+        except TRANSIENT_FETCH_ERRORS:
             continue
         for page in range(2, 5):
             try:
@@ -546,7 +798,7 @@ def fetch_dart_disclosures(stock: dict[str, Any], event: dict[str, Any]) -> list
                         timeout=10,
                     )
                 )
-            except (urllib.error.URLError, TimeoutError):
+            except TRANSIENT_FETCH_ERRORS:
                 break
         for html_text in page_texts:
             found.extend(parse_dart_recent_rows(html_text, stock["name"]))
@@ -556,7 +808,7 @@ def fetch_dart_disclosures(stock: dict[str, Any], event: dict[str, Any]) -> list
             break
 
     if not found:
-        search_url = "https://dart.fss.or.kr/dsab007/main.do?option=corp&keyword=" + urllib.parse.quote(stock["name"])
+        search_url = "https://dart.fss.or.kr/dsab007/main.do?option=corp&keyword=" + stock["ticker"]
         return [
             {
                 "title": f"{stock['name']} DART 공시 검색",
@@ -574,6 +826,30 @@ def fetch_dart_disclosures(stock: dict[str, Any], event: dict[str, Any]) -> list
         disclosure["summary"] = disclosure_summary_from_title(disclosure["title"], disclosure["company"])
         disclosure["key_sentence"] = body_excerpt or disclosure["summary"]
     return found[:3]
+
+
+def dedupe_sources(sources: list[dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for source in sources:
+        normalized_title = re.sub(r"\s+", "", source.get("title", "")).lower()
+        normalized_excerpt = re.sub(r"\s+", " ", source.get("excerpt", "")).strip().lower()[:120]
+        normalized_url = source.get("url", "").split("?", 1)[0]
+        key = (
+            source.get("source_type"),
+            source.get("rcp_no") or "",
+            normalized_url,
+            normalized_title,
+            source.get("publisher", ""),
+            normalized_excerpt,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+        if len(deduped) >= limit:
+            break
+    return [{**item, "id": index + 1} for index, item in enumerate(deduped)]
 
 
 def build_sources(
@@ -603,7 +879,7 @@ def build_sources(
             f"거래량 {latest.get('accumulatedTradingVolume', '-'):,}주 기준입니다."
         )
 
-    news_items = fetch_news_items(stock["name"], limit=4)
+    news_items = fetch_news_items(stock["name"], limit=3)
     for news in news_items:
         sources.append(
             {
@@ -614,7 +890,7 @@ def build_sources(
             }
         )
 
-    for disclosure in fetch_dart_disclosures(stock, event):
+    for disclosure in fetch_dart_disclosures(stock, event)[:2]:
         sources.append(
             {
                 "id": len(sources) + 1,
@@ -630,7 +906,7 @@ def build_sources(
                 "rcp_no": disclosure.get("rcp_no", ""),
             }
         )
-    return sources
+    return dedupe_sources(sources, limit=6)
 
 
 def build_event(stock: dict[str, Any], price_history: list[dict[str, Any]], prefix: str = "briefing") -> dict[str, Any]:
@@ -827,31 +1103,30 @@ def extract_output_text(response: dict[str, Any]) -> str:
     return "\n".join(chunks).strip()
 
 
-def analyze_with_openai(
-    event: dict[str, Any],
-    stock: dict[str, Any],
-    sources: list[dict[str, Any]],
-) -> dict[str, Any] | None:
+def call_openai_json(
+    instructions: str,
+    input_text: str,
+    schema_name: str,
+    schema: dict[str, Any],
+    max_output_tokens: int = 1600,
+) -> Any | None:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
 
     payload = {
         "model": os.getenv("OPENAI_TEXT_MODEL", "gpt-5.5"),
-        "instructions": (
-            "너는 투자 추천을 하지 않는 금융 정보 분석 도우미다. "
-            "실제 시세와 근거 링크를 바탕으로 주가 흐름의 이유를 구조화한다."
-        ),
-        "input": build_openai_prompt(event, stock, sources),
+        "instructions": instructions,
+        "input": input_text,
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "stock_reason_analysis",
+                "name": schema_name,
                 "strict": True,
-                "schema": ANALYSIS_SCHEMA,
+                "schema": schema,
             }
         },
-        "max_output_tokens": 1600,
+        "max_output_tokens": max_output_tokens,
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -865,12 +1140,32 @@ def analyze_with_openai(
             result = json.loads(response.read().decode("utf-8"))
         output_text = extract_output_text(result)
         return json.loads(output_text)
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-        print(f"[warn] OpenAI analysis failed, using offline fallback: {exc}", file=sys.stderr)
+    except TRANSIENT_PARSE_ERRORS as exc:
+        print(f"[warn] OpenAI structured call failed, using fallback: {exc}", file=sys.stderr)
         return None
 
 
-def detect_terms(payload: dict[str, Any]) -> list[dict[str, str]]:
+def analyze_with_openai(
+    event: dict[str, Any],
+    stock: dict[str, Any],
+    sources: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    result = call_openai_json(
+        instructions=(
+            "너는 투자 추천을 하지 않는 금융 정보 분석 도우미다. "
+            "실제 시세와 근거 링크를 바탕으로 주가 흐름의 이유를 구조화한다."
+        ),
+        input_text=build_openai_prompt(event, stock, sources),
+        schema_name="stock_reason_analysis",
+        schema=ANALYSIS_SCHEMA,
+        max_output_tokens=1600,
+    )
+    if isinstance(result, dict):
+        return result
+    return None
+
+
+def collect_term_text_chunks(payload: dict[str, Any]) -> list[str]:
     chunks: list[str] = []
     analysis = payload.get("analysis") or {}
     chunks.append(analysis.get("summary", ""))
@@ -888,25 +1183,274 @@ def detect_terms(payload: dict[str, Any]) -> list[dict[str, str]]:
         chunks.extend([related.get("theme", ""), related.get("reason", "")])
     stock = payload.get("stock") or {}
     chunks.extend([stock.get("sector", ""), stock.get("name", "")])
+    return [chunk for chunk in chunks if chunk]
 
-    text = " ".join(chunks).lower()
-    found = []
-    for term, explanation in TERM_EXPLANATIONS.items():
-        if term.lower() in text:
-            found.append({"term": term, "explanation": explanation})
-    if not found:
-        for term in ("변동률", "수급", "공시", business_theme(stock)[0].split("/")[0]):
-            if term not in TERM_EXPLANATIONS:
-                continue
-            found.append({"term": term, "explanation": TERM_EXPLANATIONS[term]})
-    diverse = []
-    seen = set()
-    for item in found:
-        if item["term"] in seen:
+
+def extract_term_candidates(payload: dict[str, Any]) -> list[str]:
+    combined_text = "\n".join(collect_term_text_chunks(payload))
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(term: str) -> None:
+        clean = re.sub(r"\s+", " ", str(term or "")).strip(" .,;:()[]{}")
+        if len(clean) < 2 or clean in seen:
+            return
+        seen.add(clean)
+        candidates.append(clean)
+
+    for match in re.findall(r"\b[A-Z][A-Z0-9-]{1,11}\b", combined_text):
+        add_candidate(match)
+
+    lowered = combined_text.lower()
+    for keyword in TERM_KEYWORD_HINTS:
+        if keyword.lower() in lowered:
+            add_candidate(keyword)
+
+    for term in TERM_EXPLANATIONS:
+        if term.lower() in lowered:
+            add_candidate(term)
+
+    return candidates
+
+
+def rank_term_candidates(candidates: list[str], payload: dict[str, Any]) -> list[str]:
+    if not candidates:
+        return []
+
+    stock = payload.get("stock") or {}
+    stock_name = str(stock.get("name") or "").strip().lower()
+    stock_ticker = str(stock.get("ticker") or "").strip().lower()
+    stock_sector = str(stock.get("sector") or "").strip().lower()
+    source_titles = " ".join(source.get("title", "") for source in payload.get("sources", []))
+    disclosure_titles = " ".join(
+        source.get("title", "") for source in payload.get("disclosure_summaries", []) if source.get("title")
+    )
+    analysis = payload.get("analysis") or {}
+    reason_text = " ".join(
+        [analysis.get("summary", "")]
+        + [reason.get("title", "") for reason in analysis.get("reasons", [])]
+        + [reason.get("explanation", "") for reason in analysis.get("reasons", [])]
+    )
+
+    scored: list[tuple[int, str]] = []
+    for term in candidates:
+        lowered = term.lower()
+        if lowered in {stock_name, stock_ticker, stock_sector, "kospi", "kosdaq", "krx"}:
             continue
-        diverse.append(item)
-        seen.add(item["term"])
-    return diverse[:10]
+        score = 0
+        if lowered in source_titles.lower():
+            score += 4
+        if lowered in disclosure_titles.lower():
+            score += 5
+        if lowered in reason_text.lower():
+            score += 3
+        if term in TERM_EXPLANATIONS:
+            score += 2
+        if re.fullmatch(r"[A-Z0-9-]{2,12}", term):
+            score += 2
+        score += min(reason_text.lower().count(lowered), 2)
+        if score > 0:
+            scored.append((score, term))
+
+    scored.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
+    ranked = [term for _score, term in scored[:5]]
+    if ranked:
+        return ranked
+
+    defaults = ["거래대금", "공시", "실적", business_theme(stock)[0].split("/")[0]]
+    return [term for term in defaults if term]
+
+
+def term_focus(term: str) -> str:
+    normalized = term.strip().upper()
+    if normalized in {"CB", "BW", "EB", "전환사채", "유상증자", "공시", "DART", "분기보고서", "공급계약", "IR", "기업설명회"}:
+        return "disclosure"
+    if normalized in {"거래량", "거래대금", "변동률", "전일 대비", "수급", "조정", "시가총액"}:
+        return "market"
+    if normalized in {"PER", "EPS", "실적", "영업이익", "컨센서스", "가이던스"}:
+        return "fundamental"
+    if normalized in {"노조 리스크", "리스크"}:
+        return "risk"
+    return "theme"
+
+
+def term_definition(term: str) -> str:
+    return TERM_EXPLANATIONS.get(term, f"{term}는 이 종목을 이해할 때 자주 등장하는 핵심 용어입니다.")
+
+
+def term_why_it_matters(term: str, payload: dict[str, Any]) -> str:
+    stock = payload.get("stock") or {}
+    stock_name = stock.get("name", "이 종목")
+    summary = str((payload.get("analysis") or {}).get("summary") or "")
+    source_titles = " ".join(source.get("title", "") for source in payload.get("sources", []))
+    combined = f"{summary} {source_titles}"
+    focus = term_focus(term)
+
+    if term == "DART":
+        return f"{stock_name} 이슈를 뉴스 요약이 아니라 공시 원문 기준으로 다시 확인하고 싶을 때 가장 직접적인 출처가 되는 용어입니다."
+    if term in {"IR", "기업설명회"}:
+        return f"{stock_name}가 시장과 어떤 메시지를 공유하려는지, 실적 설명이나 사업 계획 소통 일정이 있는지 해석할 때 중요합니다."
+    if term == "AI":
+        return f"{stock_name} 움직임이 단순 개별 뉴스가 아니라 AI 테마 기대와 연결돼 있는지 판단할 때 이 용어가 중요합니다."
+
+    if focus == "disclosure":
+        if "계약" in combined:
+            return f"{stock_name}의 최근 공시 흐름을 볼 때, 이 용어는 계약 내용이 실제 매출로 이어질 가능성을 읽는 데 중요합니다."
+        if "자금" in combined or term in {"CB", "전환사채", "유상증자"}:
+            return f"{stock_name} 이슈에서 이 용어는 자금 조달 방식과 잠재적인 주식 수 변화 가능성을 해석할 때 핵심입니다."
+        return f"{stock_name} 관련 공시를 읽을 때, 어떤 종류의 발표와 일정인지 빠르게 구분하는 데 도움이 됩니다."
+    if focus == "market":
+        if term == "거래량":
+            return f"{stock_name} 주가가 움직일 때 거래량이 같이 커졌는지 보면, 단순 등락인지 실제 매수세가 붙었는지 가늠하는 데 도움이 됩니다."
+        if term == "거래대금":
+            return f"{stock_name}에 자금이 얼마나 강하게 몰렸는지 보려면 거래량보다 거래대금이 더 직접적인 단서가 될 수 있습니다."
+        if term == "변동률":
+            return f"{stock_name}가 하루 동안 얼마나 강하게 반응했는지 보여 주기 때문에, 다른 종목과 움직임의 세기를 비교할 때 중요합니다."
+        return f"{stock_name} 수급 흐름을 읽을 때 이 용어는 가격 반응의 강도와 참여 규모를 함께 해석하는 기준이 됩니다."
+    if focus == "fundamental":
+        return f"{stock_name} 이슈가 단기 뉴스에 그치지 않고 실적 기대까지 이어질 수 있는지 판단할 때 이 용어가 중요합니다."
+    if focus == "risk":
+        return f"{stock_name}의 생산 차질, 비용 부담, 협상 불확실성처럼 투자심리를 눌러서 주가에 부담이 될 수 있는지 해석할 때 중요합니다."
+    return f"{stock_name}가 어떤 산업 기대를 타고 움직였는지 이해하려면 이 용어가 가리키는 테마와 사업 맥락을 함께 봐야 합니다."
+
+
+def explanation_needs_definition_fallback(term: str, text: str) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return True
+    lowered = normalized.lower()
+    generic_phrases = (
+        "최근 뉴스",
+        "공시 맥락",
+        "핵심 용어",
+        "함께 읽어야",
+        "무엇인지",
+        "어떤 이슈인지",
+    )
+    return any(phrase in normalized for phrase in generic_phrases) or lowered in {term.lower(), f"{term.lower()}입니다."}
+
+
+def explanation_needs_context_fallback(text: str) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return True
+    generic_phrases = (
+        "함께 봐야",
+        "맥락에서 중요",
+        "빠르게 이해",
+        "도움이 됩니다.",
+    )
+    return all(phrase not in normalized for phrase in ("매출", "자금", "수급", "거래", "실적", "계약", "공시", "테마", "주가")) and any(
+        phrase in normalized for phrase in generic_phrases
+    )
+
+
+def fallback_term_explanations(terms: list[str], payload: dict[str, Any]) -> list[dict[str, str]]:
+    explanations = []
+    for term in terms[:5]:
+        definition = term_definition(term)
+        why_it_matters = term_why_it_matters(term, payload)
+        explanations.append(
+            {
+                "term": term,
+                "definition": definition,
+                "why_it_matters": why_it_matters,
+            }
+        )
+    return explanations
+
+
+def explain_terms_with_openai(terms: list[str], payload: dict[str, Any]) -> list[dict[str, str]] | None:
+    if not terms:
+        return []
+
+    stock = payload.get("stock") or {}
+    source_titles = "\n".join(
+        f"- {source.get('title', '')}" for source in payload.get("sources", [])[:5] if source.get("title")
+    )
+    cache_key = "|".join(
+        [
+            "term-v4",
+            stock.get("ticker", ""),
+            ",".join(terms),
+            (payload.get("analysis") or {}).get("summary", "")[:120],
+        ]
+    )
+    cached = TERM_EXPLANATION_CACHE.get(cache_key)
+    if cached and time.time() - cached[0] < TERM_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    prompt = f"""
+종목: {stock.get('name', '')} ({stock.get('ticker', '')}, {stock.get('market', '')})
+업종: {stock.get('sector', '')}
+설명할 용어: {", ".join(terms)}
+
+최근 맥락:
+{(payload.get("analysis") or {}).get("summary", "")}
+
+관련 뉴스/공시 제목:
+{source_titles}
+"""
+    result = call_openai_json(
+        instructions=(
+            "너는 한국 주식 초보 투자자를 위한 용어 설명 도우미다. "
+            "각 용어를 1문장으로 쉽게 설명하고, 왜 지금 이 종목 맥락에서 중요한지 1문장으로 덧붙여라. "
+            "definition과 why_it_matters가 같은 말을 반복하지 않게 쓰고, 각 용어의 설명은 서로 다른 표현으로 작성해라. "
+            "투자 추천처럼 쓰지 말고, 쉽고 짧은 한국어로 답하라."
+        ),
+        input_text=prompt,
+        schema_name="term_explanations",
+        schema=TERM_EXPLANATION_SCHEMA,
+        max_output_tokens=900,
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("terms"), list):
+        return None
+
+    normalized = []
+    for item in result["terms"]:
+        if not all(isinstance(item.get(key), str) and item.get(key).strip() for key in ("term", "definition", "why_it_matters")):
+            continue
+        term = item["term"].strip()
+        definition = item["definition"].strip()
+        why_it_matters = item["why_it_matters"].strip()
+        if explanation_needs_definition_fallback(term, definition):
+            definition = term_definition(term)
+        if explanation_needs_context_fallback(why_it_matters):
+            why_it_matters = term_why_it_matters(term, payload)
+        normalized.append(
+            {
+                "term": term,
+                "definition": definition,
+                "why_it_matters": why_it_matters,
+            }
+        )
+    if normalized:
+        TERM_EXPLANATION_CACHE[cache_key] = (time.time(), normalized)
+    return normalized or None
+
+
+def detect_terms(payload: dict[str, Any]) -> list[dict[str, str]]:
+    candidates = extract_term_candidates(payload)
+    ranked = rank_term_candidates(candidates, payload)
+    if not ranked:
+        return []
+
+    known_terms = [term for term in ranked if term in TERM_EXPLANATIONS]
+    unknown_terms = [term for term in ranked if term not in TERM_EXPLANATIONS]
+
+    resolved: dict[str, dict[str, str]] = {
+        item["term"]: item for item in fallback_term_explanations(known_terms, payload)
+    }
+    if unknown_terms:
+        ai_terms = explain_terms_with_openai(unknown_terms, payload) or []
+        for item in ai_terms:
+            resolved[item["term"]] = item
+        missing_terms = [term for term in unknown_terms if term not in resolved]
+        if missing_terms:
+            for item in fallback_term_explanations(missing_terms, payload):
+                resolved[item["term"]] = item
+
+    return [resolved[term] for term in ranked if term in resolved]
 
 
 def data_basis(event: dict[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1013,30 +1557,206 @@ def related_stock_reason(
     )
 
 
-def movers_payload() -> dict[str, Any]:
+def fmt_trading_value(value: int | None) -> str:
+    if not value:
+        return "집계 없음"
+    if value >= 1_0000_0000_0000:
+        return f"{value / 1_0000_0000_0000:.1f}조원"
+    return f"{value / 1_0000_0000:.0f}억원"
+
+
+def fetch_trending_candidates() -> list[dict[str, Any]]:
     catalog = load_market_catalog()
-    candidates = [
-        stock for stock in catalog if isinstance(stock.get("change_rate"), (int, float))
-    ]
-    candidates.sort(key=lambda item: abs(item.get("change_rate") or 0), reverse=True)
-    events = []
-    for stock in candidates[:3]:
+    candidates = []
+    for stock in catalog:
+        if not isinstance(stock.get("change_rate"), (int, float)):
+            continue
+        trading_value = stock.get("accumulated_trading_value") or 0
+        trading_volume = stock.get("accumulated_trading_volume") or 0
+        market_value = stock.get("market_value") or 0
+        pre_score = (
+            (trading_value / 100_000_000_000)
+            + (trading_volume / 12_000_000)
+            + abs(stock["change_rate"]) * 6
+            + (market_value / 2_000_000_000_000)
+        )
+        candidates.append({**stock, "pre_score": pre_score})
+
+    candidates.sort(key=lambda item: item.get("pre_score", 0), reverse=True)
+    return candidates[:TRENDING_CANDIDATE_LIMIT]
+
+
+def enrich_trending_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched = []
+    for stock in candidates:
         price_history = fetch_price_history(stock["ticker"])
+        latest = price_history[0] if price_history else {}
+        latest_volume = parse_int(latest.get("accumulatedTradingVolume")) or stock.get("accumulated_trading_volume") or 0
+        current_price = parse_int(latest.get("closePrice")) or stock.get("current_price") or 0
+        trading_value = stock.get("accumulated_trading_value")
+        if not trading_value and current_price and latest_volume:
+            trading_value = current_price * latest_volume
+        news_count = fetch_news_count(stock["name"], limit=20)
         event = build_event(stock, price_history, prefix="live")
+        enriched.append(
+            {
+                **stock,
+                "event": event,
+                "news_count": news_count,
+                "accumulated_trading_volume": latest_volume,
+                "accumulated_trading_value": trading_value or 0,
+                "market_value": stock.get("market_value") or 0,
+            }
+        )
+    return enriched
+
+
+def score_trending_candidate(stock: dict[str, Any]) -> float:
+    change_rate = abs(stock.get("event", {}).get("change_rate") or stock.get("change_rate") or 0)
+    trading_value = stock.get("accumulated_trading_value") or 0
+    trading_volume = stock.get("accumulated_trading_volume") or 0
+    news_count = stock.get("news_count") or 0
+    market_value = stock.get("market_value") or 0
+    return (
+        (trading_value / 80_000_000_000)
+        + (trading_volume / 12_000_000)
+        + change_rate * 3
+        + news_count * 8
+        + (market_value / 3_000_000_000_000)
+    )
+
+
+def score_momentum_candidate(stock: dict[str, Any]) -> float:
+    change_rate = abs(stock.get("event", {}).get("change_rate") or stock.get("change_rate") or 0)
+    trading_value = stock.get("accumulated_trading_value") or 0
+    news_count = stock.get("news_count") or 0
+    return change_rate * 15 + (trading_value / 200_000_000_000) + news_count * 2
+
+
+def is_leader_candidate(stock: dict[str, Any]) -> bool:
+    market_value = stock.get("market_value") or 0
+    trading_value = stock.get("accumulated_trading_value") or 0
+    return market_value >= 5_000_000_000_000 or trading_value >= 300_000_000_000
+
+
+def score_leader_candidate(stock: dict[str, Any]) -> float:
+    change_rate = abs(stock.get("event", {}).get("change_rate") or stock.get("change_rate") or 0)
+    trading_value = stock.get("accumulated_trading_value") or 0
+    news_count = stock.get("news_count") or 0
+    market_value = stock.get("market_value") or 0
+    return (
+        (market_value / 1_000_000_000_000)
+        + (trading_value / 100_000_000_000)
+        + news_count * 5
+        + change_rate * 2
+    )
+
+
+def summarize_trending_candidate(stock: dict[str, Any], category_id: str) -> str:
+    event = stock.get("event") or {}
+    summary_bits = [f"변동률 {fmt_percent(event.get('change_rate'))}"]
+    trading_value = stock.get("accumulated_trading_value")
+    if trading_value:
+        summary_bits.append(f"거래대금 {fmt_trading_value(trading_value)}")
+    news_count = stock.get("news_count") or 0
+    if news_count:
+        summary_bits.append(f"관련 뉴스 {news_count}건")
+    if category_id == "momentum":
+        return " / ".join(summary_bits) + " 기준으로 선별한 급등락 종목입니다."
+    if category_id == "leaders":
+        return " / ".join(summary_bits) + " 기준으로 선별한 대장주 관심 종목입니다."
+    return " / ".join(summary_bits) + " 기준으로 선별한 실시간 인기 종목입니다."
+
+
+def build_category_events(
+    stocks: list[dict[str, Any]],
+    category_id: str,
+    generated_by: str,
+    score_fn,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    events = []
+    for stock in sorted(stocks, key=score_fn, reverse=True)[:limit]:
+        event = stock["event"]
         events.append(
             {
                 **event,
+                "id": f"{category_id}-{event['id']}",
                 "stock_name": stock["name"],
                 "ticker": stock["ticker"],
                 "market": stock["market"],
                 "sector": stock["sector"],
-                "summary": (
-                    f"네이버페이 증권 기준 전일 대비 {fmt_percent(event.get('change_rate'))}입니다."
-                ),
-                "generated_by": "naver_live_market",
+                "summary": summarize_trending_candidate(stock, category_id),
+                "generated_by": generated_by,
+                "category_id": category_id,
+                "popularity_score": round(score_fn(stock), 2),
+                "news_count": stock.get("news_count", 0),
+                "accumulated_trading_value": stock.get("accumulated_trading_value"),
+                "accumulated_trading_volume": stock.get("accumulated_trading_volume"),
+                "market_value": stock.get("market_value"),
             }
         )
-    return {"events": events, "as_of": now_iso(), "data_source": "네이버페이 증권"}
+    return events
+
+
+def movers_payload(force_refresh: bool = False) -> dict[str, Any]:
+    now = time.time()
+    if force_refresh:
+        CATALOG_CACHE.update({"loaded_at": 0.0, "stocks": []})
+        TRENDING_CACHE.update({"loaded_at": 0.0, "payload": None})
+    cached_payload = TRENDING_CACHE.get("payload")
+    if cached_payload and now - TRENDING_CACHE["loaded_at"] < TRENDING_CACHE_TTL_SECONDS:
+        return cached_payload
+
+    candidates = enrich_trending_candidates(fetch_trending_candidates())
+    trending_events = build_category_events(
+        candidates,
+        category_id="trending",
+        generated_by="live_market_popularity_score",
+        score_fn=score_trending_candidate,
+    )
+    momentum_events = build_category_events(
+        candidates,
+        category_id="momentum",
+        generated_by="live_market_momentum_score",
+        score_fn=score_momentum_candidate,
+    )
+    leader_candidates = [stock for stock in candidates if is_leader_candidate(stock)]
+    leader_events = build_category_events(
+        leader_candidates or candidates,
+        category_id="leaders",
+        generated_by="live_market_leader_interest_score",
+        score_fn=score_leader_candidate,
+    )
+    categories = [
+        {
+            "id": "trending",
+            "label": "실시간 인기 종목",
+            "description": "거래대금, 거래량, 뉴스 수를 중심으로 본 관심 종목",
+            "events": trending_events,
+        },
+        {
+            "id": "momentum",
+            "label": "급등락 종목",
+            "description": "하루 변동 폭이 큰 종목",
+            "events": momentum_events,
+        },
+        {
+            "id": "leaders",
+            "label": "대장주 관심 종목",
+            "description": "시가총액과 거래대금이 큰 대표 종목",
+            "events": leader_events,
+        },
+    ]
+    all_events = [event for category in categories for event in category["events"]]
+    payload = {
+        "categories": categories,
+        "events": all_events,
+        "as_of": now_iso(),
+        "data_source": "네이버페이 증권 + 뉴스 언급량",
+    }
+    TRENDING_CACHE.update({"loaded_at": now, "payload": payload})
+    return payload
 
 
 def search_stocks(query: str) -> list[dict[str, Any]]:
@@ -1068,11 +1788,8 @@ def search_stocks(query: str) -> list[dict[str, Any]]:
 
 
 def ticker_from_event_id(event_id: str) -> str:
-    for prefix in ("live-", "briefing-"):
-        if event_id.startswith(prefix):
-            ticker = event_id.removeprefix(prefix)
-            if re.fullmatch(r"\d{6}", ticker):
-                return ticker
+    if match := re.search(r"(\d{6})$", event_id):
+        return match.group(1)
     raise KeyError(event_id)
 
 
@@ -1089,25 +1806,27 @@ class WhyStockHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
         try:
             if path == "/api/health":
                 self.send_json({"ok": True, "service": "WhyStock", "time": now_iso()})
             elif path == "/api/events/movers":
-                self.send_json(movers_payload())
+                force_refresh = query.get("refresh", ["0"])[0] == "1"
+                self.send_json(movers_payload(force_refresh=force_refresh))
             elif match := re.fullmatch(r"/api/events/([^/]+)", path):
                 event_id = urllib.parse.unquote(match.group(1))
                 ticker = ticker_from_event_id(event_id)
-                prefix = "live" if event_id.startswith("live-") else "briefing"
-                self.send_json(detail_for_ticker(ticker, prefix=prefix))
+                prefix = "briefing" if "briefing-" in event_id else "live"
+                force_refresh = query.get("refresh", ["0"])[0] == "1"
+                self.send_json(detail_for_ticker(ticker, prefix=prefix, force_refresh=force_refresh))
             elif path == "/api/stocks/search":
-                params = urllib.parse.parse_qs(parsed.query)
-                query = params.get("query", [""])[0]
-                self.send_json({"stocks": search_stocks(query)})
+                search_query = query.get("query", [""])[0]
+                self.send_json({"stocks": search_stocks(search_query)})
             elif match := re.fullmatch(r"/api/stocks/(\d{6})/briefing", path):
-                self.send_json(detail_for_ticker(match.group(1), prefix="briefing"))
+                force_refresh = query.get("refresh", ["0"])[0] == "1"
+                self.send_json(detail_for_ticker(match.group(1), prefix="briefing", force_refresh=force_refresh))
             elif path == "/api/terms/explain":
-                params = urllib.parse.parse_qs(parsed.query)
-                term = params.get("term", [""])[0].strip()
+                term = query.get("term", [""])[0].strip()
                 self.send_json(
                     {
                         "term": term,
@@ -1132,7 +1851,7 @@ class WhyStockHandler(BaseHTTPRequestHandler):
                 self.read_json_body()
                 event_id = urllib.parse.unquote(match.group(1))
                 ticker = ticker_from_event_id(event_id)
-                prefix = "live" if event_id.startswith("live-") else "briefing"
+                prefix = "briefing" if "briefing-" in event_id else "live"
                 self.send_json(detail_for_ticker(ticker, prefix=prefix, force_refresh=True))
             else:
                 self.send_json({"error": "not_found"}, status=404)

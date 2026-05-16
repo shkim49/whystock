@@ -109,7 +109,7 @@ button {
 
 .layout {
   display: grid;
-  grid-template-columns: 332px minmax(0, 1fr);
+  grid-template-columns: 420px minmax(0, 1fr);
   gap: 18px;
   padding: 18px;
   min-width: 0;
@@ -213,6 +213,41 @@ button {
 .mover-list {
   display: grid;
   gap: 10px;
+}
+
+.mover-category {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.mover-category-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mover-category-head strong {
+  font-size: 14px;
+}
+
+.mover-category-head span,
+.mover-category-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mover-category-note {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.mover-category-list {
+  display: grid;
+  gap: 8px;
 }
 
 .mover-item {

@@ -1,11 +1,13 @@
 const state = {
-  events: [],
+  categories: [],
+  allEvents: [],
   selectedEventId: null,
   detail: null,
   watchlist: [],
 };
 
 const MOVERS_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const LIVE_DETAIL_REFRESH_INTERVAL_MS = 60 * 1000;
 const WATCHLIST_KEY = "whystock.watchlist";
 const nodes = {};
 
@@ -44,12 +46,20 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   loadWatchlist();
   preferGeneratedPng();
-  loadMovers();
+  loadMovers({ forceRefresh: true }).catch((error) => {
+    console.error("Failed to load mover events", error);
+    showError("이벤트 정보를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  });
   setInterval(() => {
     loadMovers({ preserveSelection: true, silent: true }).catch((error) => {
       console.error("Failed to refresh mover events", error);
     });
   }, MOVERS_REFRESH_INTERVAL_MS);
+  setInterval(() => {
+    refreshSelectedDetail().catch((error) => {
+      console.error("Failed to refresh selected detail", error);
+    });
+  }, LIVE_DETAIL_REFRESH_INTERVAL_MS);
 });
 
 function bindEvents() {
@@ -72,13 +82,15 @@ async function loadMovers(options = {}) {
     setLoading("급등락 이벤트를 불러오는 중입니다.");
   }
   const previousEventId = state.selectedEventId;
-  const data = await fetchJson("/api/events/movers");
-  state.events = data.events;
+  const refresh = options.forceRefresh ? "?refresh=1" : "";
+  const data = await fetchJson(`/api/events/movers${refresh}`);
+  state.categories = data.categories || [];
+  state.allEvents = data.events || state.categories.flatMap((category) => category.events || []);
   nodes.asOfText.textContent = `기준 ${formatTime(data.as_of)}`;
-  nodes.eventCount.textContent = String(data.events.length);
+  nodes.eventCount.textContent = String(state.allEvents.length);
   renderMovers();
 
-  if (state.events.length === 0) {
+  if (state.allEvents.length === 0) {
     return;
   }
 
@@ -86,11 +98,13 @@ async function loadMovers(options = {}) {
     return;
   }
 
-  const selectedStillExists = state.events.some((event) => event.id === previousEventId);
+  const selectedStillExists = state.allEvents.some((event) => event.id === previousEventId);
   if (options.preserveSelection && selectedStillExists) {
     await selectEvent(previousEventId);
+  } else if (options.preserveSelection && state.allEvents[0]) {
+    await selectEvent(state.allEvents[0].id);
   } else if (!options.preserveSelection) {
-    await selectEvent(state.events[0].id);
+    await selectEvent(state.allEvents[0].id);
   }
 }
 
@@ -98,8 +112,13 @@ async function selectEvent(eventId) {
   state.selectedEventId = eventId;
   renderMovers();
   setLoading("근거 자료와 분석을 불러오는 중입니다.");
-  state.detail = await fetchJson(`/api/events/${encodeURIComponent(eventId)}`);
-  renderDetail();
+  try {
+    state.detail = await fetchJson(`/api/events/${encodeURIComponent(eventId)}`);
+    renderDetail();
+  } catch (error) {
+    console.error("Failed to load event detail", error);
+    showError("상세 분석을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
 }
 
 async function selectStockBriefing(ticker) {
@@ -107,15 +126,29 @@ async function selectStockBriefing(ticker) {
   renderMovers();
   nodes.searchResults.innerHTML = "";
   setLoading("선택한 종목의 시세와 뉴스를 검색하는 중입니다.");
-  state.detail = await fetchJson(`/api/stocks/${encodeURIComponent(ticker)}/briefing`);
-  renderDetail();
+  try {
+    state.detail = await fetchJson(`/api/stocks/${encodeURIComponent(ticker)}/briefing`);
+    renderDetail();
+  } catch (error) {
+    console.error("Failed to load stock briefing", error);
+    showError("종목 브리핑을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
 }
 
 function setLoading(message) {
   nodes.eventTitle.textContent = "불러오는 중";
   nodes.eventSubtitle.textContent = message;
+  resetDetailState();
+}
+
+function resetDetailState() {
   nodes.basisNote.textContent = "";
   nodes.basisNote.hidden = true;
+  nodes.currentPrice.textContent = "-";
+  nodes.changeRate.textContent = "-";
+  nodes.changeRate.className = "";
+  nodes.volumeChange.textContent = "-";
+  nodes.dataBasis.textContent = "-";
   nodes.summaryText.textContent = "";
   nodes.reasonList.innerHTML = "";
   nodes.materialTagList.innerHTML = "";
@@ -127,27 +160,56 @@ function setLoading(message) {
   nodes.termExplanation.textContent = "잠시만 기다려 주세요.";
 }
 
+function showError(message) {
+  nodes.eventTitle.textContent = "정보를 불러오지 못했습니다.";
+  nodes.eventSubtitle.textContent = message;
+  nodes.runtimeBadge.textContent = "request failed";
+  resetDetailState();
+  nodes.termExplanation.textContent = "잠시 후 다시 시도해 주세요.";
+}
+
 function renderMovers() {
   nodes.moverList.innerHTML = "";
-  state.events.forEach((event) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mover-item";
-    button.setAttribute("aria-current", event.id === state.selectedEventId ? "true" : "false");
-    button.addEventListener("click", () => selectEvent(event.id));
+  state.categories.forEach((category) => {
+    const section = document.createElement("section");
+    section.className = "mover-category";
+    const items = category.events || [];
+    const buttons = items
+      .map((event) => {
+        const changeClass = event.change_rate >= 0 ? "up" : "down";
+        return `
+          <button
+            type="button"
+            class="mover-item"
+            aria-current="${event.id === state.selectedEventId ? "true" : "false"}"
+            data-event-id="${escapeHtml(event.id)}"
+          >
+            <div class="mover-top">
+              <span class="mover-name">
+                <strong>${escapeHtml(event.stock_name)}</strong>
+                <span>${escapeHtml(event.ticker)} · ${escapeHtml(event.sector)}</span>
+              </span>
+              <span class="pct ${changeClass}">${formatPercent(event.change_rate)}</span>
+            </div>
+            <div class="mover-summary">${escapeHtml(event.summary || "실제 시세 기준 이벤트입니다.")}</div>
+          </button>
+        `;
+      })
+      .join("");
 
-    const changeClass = event.change_rate >= 0 ? "up" : "down";
-    button.innerHTML = `
-      <div class="mover-top">
-        <span class="mover-name">
-          <strong>${escapeHtml(event.stock_name)}</strong>
-          <span>${escapeHtml(event.ticker)} · ${escapeHtml(event.sector)}</span>
-        </span>
-        <span class="pct ${changeClass}">${formatPercent(event.change_rate)}</span>
+    section.innerHTML = `
+      <div class="mover-category-head">
+        <strong>${escapeHtml(category.label)}</strong>
+        <span>${items.length}개</span>
       </div>
-      <div class="mover-summary">${escapeHtml(event.summary || "실제 시세 기준 이벤트입니다.")}</div>
+      <p class="mover-category-note">${escapeHtml(category.description || "")}</p>
+      <div class="mover-category-list">${buttons || '<div class="empty">표시할 종목이 없습니다.</div>'}</div>
     `;
-    nodes.moverList.appendChild(button);
+    nodes.moverList.appendChild(section);
+  });
+
+  nodes.moverList.querySelectorAll("[data-event-id]").forEach((button) => {
+    button.addEventListener("click", () => selectEvent(button.getAttribute("data-event-id")));
   });
 }
 
@@ -365,20 +427,29 @@ function renderWatchlist() {
 function renderTerms(terms) {
   nodes.termButtons.innerHTML = "";
   if (terms.length === 0) {
-    nodes.termExplanation.textContent = "감지된 용어가 없습니다.";
+    nodes.termExplanation.textContent = "설명할 용어가 없습니다.";
     return;
   }
+
+  const buildTermDetail = (item) => {
+    if (item.definition || item.why_it_matters) {
+      return [item.definition, item.why_it_matters].filter(Boolean).join(" ");
+    }
+    return item.explanation || "";
+  };
 
   terms.forEach((item, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = item.term;
     button.addEventListener("click", () => {
-      nodes.termExplanation.textContent = `${item.term}: ${item.explanation}`;
+      const detail = buildTermDetail(item);
+      nodes.termExplanation.textContent = `${item.term}: ${detail}`;
     });
     nodes.termButtons.appendChild(button);
     if (index === 0) {
-      nodes.termExplanation.textContent = `${item.term}: ${item.explanation}`;
+      const detail = buildTermDetail(item);
+      nodes.termExplanation.textContent = `${item.term}: ${detail}`;
     }
   });
 }
@@ -393,6 +464,9 @@ async function rerunAnalysis() {
       body: JSON.stringify({ refresh: true }),
     });
     renderDetail();
+  } catch (error) {
+    console.error("Failed to rerun analysis", error);
+    showError("분석을 다시 실행하지 못했습니다. 잠시 후 다시 시도해 주세요.");
   } finally {
     nodes.analyzeButton.disabled = false;
   }
@@ -415,7 +489,7 @@ async function searchStocks() {
   }
 
   data.stocks.forEach((stock) => {
-    const match = state.events.find((event) => event.ticker === stock.ticker);
+    const match = state.allEvents.find((event) => event.ticker === stock.ticker);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "search-result";
@@ -433,6 +507,18 @@ async function searchStocks() {
     });
     nodes.searchResults.appendChild(button);
   });
+}
+
+async function refreshSelectedDetail() {
+  if (!state.selectedEventId) return;
+  if (state.selectedEventId.startsWith("briefing-")) {
+    const ticker = state.selectedEventId.replace("briefing-", "");
+    state.detail = await fetchJson(`/api/stocks/${encodeURIComponent(ticker)}/briefing`);
+    renderDetail();
+    return;
+  }
+  state.detail = await fetchJson(`/api/events/${encodeURIComponent(state.selectedEventId)}`);
+  renderDetail();
 }
 
 async function fetchJson(url, options = {}) {
