@@ -1,0 +1,22 @@
+{
+  "summary": "반도체 업황 개선과 거래량 확대 흐름이 함께 보입니다. 지금 사야 합니다.",
+  "reasons": [
+    {
+      "title": "반도체 업황",
+      "importance": 1,
+      "evidence_source_ids": [1, 2],
+      "explanation": "반도체 업황 개선 기사와 거래량 증가가 함께 확인됩니다."
+    },
+    {
+      "title": "매수 추천",
+      "importance": 2,
+      "evidence_source_ids": [99],
+      "explanation": "무조건 오를 것이므로 지금 매수해야 합니다."
+    }
+  ],
+  "market_reaction": {
+    "price_change": "+3.2%",
+    "volume_change": "+14.8%"
+  },
+  "disclaimer": "매수 추천이 아닌 정보 요약입니다."
+}

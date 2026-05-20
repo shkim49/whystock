@@ -4,6 +4,8 @@ const state = {
   selectedEventId: null,
   detail: null,
   watchlist: [],
+  presentationOpen: false,
+  presentationStep: 0,
 };
 
 const MOVERS_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
@@ -16,12 +18,22 @@ document.addEventListener("DOMContentLoaded", () => {
     "runtimeBadge",
     "asOfText",
     "eventCount",
-    "stockSearch",
-    "searchResults",
+    "assistantForm",
+    "assistantInput",
+    "assistantSubmit",
+    "assistantAnswer",
+    "presentationButton",
+    "presentationOverlay",
+    "presentationClose",
+    "presentationCounter",
+    "presentationStepLabel",
+    "presentationStage",
+    "presentationPrev",
+    "presentationNext",
+    "presentationDots",
     "moverList",
     "eventTitle",
     "eventSubtitle",
-    "brandVisual",
     "currentPrice",
     "changeRate",
     "volumeChange",
@@ -31,7 +43,6 @@ document.addEventListener("DOMContentLoaded", () => {
     "watchButton",
     "summaryText",
     "reasonList",
-    "materialTagList",
     "newsTimelineList",
     "watchlistList",
     "sourceList",
@@ -45,7 +56,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bindEvents();
   loadWatchlist();
-  preferGeneratedPng();
   loadMovers({ forceRefresh: true }).catch((error) => {
     console.error("Failed to load mover events", error);
     showError("이벤트 정보를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -65,16 +75,17 @@ document.addEventListener("DOMContentLoaded", () => {
 function bindEvents() {
   nodes.analyzeButton.addEventListener("click", rerunAnalysis);
   nodes.watchButton.addEventListener("click", toggleCurrentWatch);
-  nodes.stockSearch.addEventListener("input", debounce(searchStocks, 220));
-}
-
-function preferGeneratedPng() {
-  const probe = new Image();
-  probe.onload = () => {
-    nodes.brandVisual.src = "/assets/generated/why-stock-hero.png";
-  };
-  probe.onerror = () => {};
-  probe.src = `/assets/generated/why-stock-hero.png?probe=${Date.now()}`;
+  nodes.assistantForm.addEventListener("submit", submitAssistantQuestion);
+  nodes.presentationButton.addEventListener("click", openPresentationMode);
+  nodes.presentationClose.addEventListener("click", closePresentationMode);
+  nodes.presentationPrev.addEventListener("click", () => setPresentationStep(state.presentationStep - 1));
+  nodes.presentationNext.addEventListener("click", () => setPresentationStep(state.presentationStep + 1));
+  document.addEventListener("keydown", handlePresentationKeydown);
+  window.addEventListener("resize", () => {
+    if (state.presentationOpen) {
+      renderPresentation();
+    }
+  });
 }
 
 async function loadMovers(options = {}) {
@@ -124,7 +135,6 @@ async function selectEvent(eventId) {
 async function selectStockBriefing(ticker) {
   state.selectedEventId = `briefing-${ticker}`;
   renderMovers();
-  nodes.searchResults.innerHTML = "";
   setLoading("선택한 종목의 시세와 뉴스를 검색하는 중입니다.");
   try {
     state.detail = await fetchJson(`/api/stocks/${encodeURIComponent(ticker)}/briefing`);
@@ -151,7 +161,6 @@ function resetDetailState() {
   nodes.dataBasis.textContent = "-";
   nodes.summaryText.textContent = "";
   nodes.reasonList.innerHTML = "";
-  nodes.materialTagList.innerHTML = "";
   nodes.newsTimelineList.innerHTML = "";
   nodes.watchlistList.innerHTML = "";
   nodes.sourceList.innerHTML = "";
@@ -222,7 +231,6 @@ function renderDetail() {
     related_stocks: relatedStocks,
     data_basis: dataBasis,
     news_timeline: newsTimeline,
-    material_tags: materialTags,
     terms,
   } = state.detail;
   const changeClass = Number(event.change_rate) >= 0 ? "up" : "down";
@@ -246,12 +254,14 @@ function renderDetail() {
   renderWatchButton(stock);
 
   renderReasons(analysis?.reasons || [], sources);
-  renderMaterialTags(materialTags || []);
   renderNewsTimeline(newsTimeline || []);
   renderWatchlist();
   renderSources(sources);
   renderRelated(relatedStocks || []);
   renderTerms(terms || []);
+  if (state.presentationOpen) {
+    renderPresentation();
+  }
 }
 
 function renderReasons(reasons, sources) {
@@ -280,24 +290,6 @@ function renderReasons(reasons, sources) {
       <div class="evidence-chips">${chips}</div>
     `;
     nodes.reasonList.appendChild(item);
-  });
-}
-
-function renderMaterialTags(tags) {
-  nodes.materialTagList.innerHTML = "";
-  if (tags.length === 0) {
-    nodes.materialTagList.innerHTML = `<div class="empty">감지된 재료가 없습니다.</div>`;
-    return;
-  }
-
-  tags.forEach((tag) => {
-    const item = document.createElement("div");
-    item.className = "material-tag";
-    item.innerHTML = `
-      <strong>${escapeHtml(tag.label)}</strong>
-      <p>${escapeHtml(tag.description)}</p>
-    `;
-    nodes.materialTagList.appendChild(item);
   });
 }
 
@@ -454,6 +446,505 @@ function renderTerms(terms) {
   });
 }
 
+function openPresentationMode() {
+  state.presentationOpen = true;
+  state.presentationStep = 0;
+  nodes.presentationOverlay.hidden = false;
+  document.body.classList.add("presentation-active");
+  renderPresentation();
+}
+
+function closePresentationMode() {
+  state.presentationOpen = false;
+  nodes.presentationOverlay.hidden = true;
+  document.body.classList.remove("presentation-active");
+}
+
+function setPresentationStep(step) {
+  const steps = buildPresentationSteps();
+  state.presentationStep = Math.min(Math.max(step, 0), steps.length - 1);
+  renderPresentation();
+}
+
+function handlePresentationKeydown(event) {
+  if (!state.presentationOpen) return;
+  if (event.key === "Escape") {
+    closePresentationMode();
+    return;
+  }
+  if (event.key === "ArrowRight" || event.key === " ") {
+    event.preventDefault();
+    setPresentationStep(state.presentationStep + 1);
+    return;
+  }
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    setPresentationStep(state.presentationStep - 1);
+  }
+}
+
+function renderPresentation() {
+  const steps = buildPresentationSteps();
+  const currentStep = steps[state.presentationStep] || steps[0];
+  nodes.presentationCounter.textContent = `${state.presentationStep + 1} / ${steps.length}`;
+  nodes.presentationStepLabel.textContent = currentStep.label;
+  nodes.presentationStage.innerHTML = currentStep.html;
+  nodes.presentationPrev.disabled = state.presentationStep === 0;
+  nodes.presentationNext.disabled = state.presentationStep === steps.length - 1;
+  nodes.presentationDots.innerHTML = steps
+    .map(
+      (_, index) => `
+        <button
+          type="button"
+          aria-label="${index + 1}단계"
+          aria-current="${index === state.presentationStep ? "true" : "false"}"
+          data-presentation-step="${index}"
+        ></button>
+      `,
+    )
+    .join("");
+  nodes.presentationDots.querySelectorAll("[data-presentation-step]").forEach((button) => {
+    button.addEventListener("click", () => setPresentationStep(Number(button.dataset.presentationStep)));
+  });
+  nodes.presentationStage.querySelectorAll("[data-presentation-ticker]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closePresentationMode();
+      selectStockBriefing(button.dataset.presentationTicker);
+    });
+  });
+}
+
+function buildPresentationSteps() {
+  if (!state.detail) {
+    return [
+      {
+        label: "준비",
+        html: `
+          <article class="presentation-slide presentation-empty-slide">
+            <p class="presentation-kicker">WhyStock briefing</p>
+            <h2>먼저 종목을 선택해 주세요</h2>
+            <p>왼쪽 목록에서 종목을 고르거나 채팅창에 종목명 또는 코드를 입력하면 발표 모드가 해당 브리핑을 단계별로 정리합니다.</p>
+          </article>
+        `,
+      },
+    ];
+  }
+
+  const detail = state.detail;
+  const event = detail.event || {};
+  const stock = detail.stock || {};
+  const analysis = detail.analysis || {};
+  const sources = detail.sources || [];
+  const newsTimeline = detail.news_timeline || [];
+  const relatedStocks = detail.related_stocks || [];
+  const terms = detail.terms || [];
+  const reasons = analysis.reasons || [];
+  const changeClass = Number(event.change_rate) >= 0 ? "up" : "down";
+  const title = `${stock.name || "-"} 브리핑`;
+
+  return [
+    {
+      label: "한눈에 보기",
+      html: `
+        <article class="presentation-slide">
+          <p class="presentation-kicker">${escapeHtml(stock.market || "Stock")} · ${escapeHtml(stock.ticker || "-")}</p>
+          <h2>${escapeHtml(title)}</h2>
+          <div class="presentation-metrics">
+            <div><span>현재가</span><strong>${escapeHtml(formatPrice(event.current_price))}</strong></div>
+            <div><span>변동률</span><strong class="${changeClass}">${escapeHtml(formatPercent(event.change_rate))}</strong></div>
+            <div><span>거래량 변화</span><strong>${escapeHtml(formatPercent(event.volume_change_rate))}</strong></div>
+          </div>
+          <p class="presentation-summary">${escapeHtml(analysis.summary || "아직 분석 요약이 없습니다.")}</p>
+        </article>
+      `,
+    },
+    {
+      label: "가격 반응",
+      html: `
+        <article class="presentation-slide">
+          <p class="presentation-kicker">Price action</p>
+          <h2>가격과 거래량이 먼저 보여주는 신호</h2>
+          <div class="presentation-split">
+            <div class="presentation-focus ${changeClass}">
+              <span>등락률</span>
+              <strong>${escapeHtml(formatPercent(event.change_rate))}</strong>
+            </div>
+            <div class="presentation-facts">
+              <div><span>거래량 변화</span><strong>${escapeHtml(formatPercent(event.volume_change_rate))}</strong></div>
+              <div><span>자료 기준</span><strong>${escapeHtml(detail.data_basis?.label || `${sources.length}건`)}</strong></div>
+              <div><span>감지 시각</span><strong>${escapeHtml(formatTime(event.detected_at))}</strong></div>
+            </div>
+          </div>
+          <p class="presentation-note">${escapeHtml(detail.data_basis?.note || "가격, 거래량, 뉴스, 공시 자료를 함께 확인해 해석합니다.")}</p>
+        </article>
+      `,
+    },
+    {
+      label: "원인 정리",
+      html: `
+        <article class="presentation-slide">
+          <p class="presentation-kicker">Why it moved</p>
+          <h2>핵심 원인 후보</h2>
+          ${presentationReasonList(reasons)}
+        </article>
+      `,
+    },
+    {
+      label: "근거 자료",
+      html: `
+        <article class="presentation-slide">
+          <p class="presentation-kicker">Evidence</p>
+          <h2>확인한 뉴스와 공시</h2>
+          <div class="presentation-two-column">
+            <div>
+              <h3>근거 자료</h3>
+              ${presentationSourceList(sources)}
+            </div>
+            <div>
+              <h3>뉴스 흐름</h3>
+              ${presentationNewsList(newsTimeline)}
+            </div>
+          </div>
+        </article>
+      `,
+    },
+    {
+      label: "함께 볼 것",
+      html: `
+        <article class="presentation-slide">
+          <p class="presentation-kicker">Next checks</p>
+          <h2>관련 종목과 용어</h2>
+          <div class="presentation-two-column">
+            <div>
+              <h3>관련 종목</h3>
+              ${presentationRelatedList(relatedStocks)}
+            </div>
+            <div>
+              <h3>감지된 용어</h3>
+              ${presentationTermList(terms)}
+            </div>
+          </div>
+        </article>
+      `,
+    },
+  ];
+}
+
+function presentationReasonList(reasons) {
+  const items = reasons.slice(0, 4);
+  if (items.length === 0) {
+    return `<div class="presentation-empty-card">분석된 원인 후보가 없습니다.</div>`;
+  }
+  return `
+    <ol class="presentation-card-list">
+      ${items
+        .map(
+          (reason) => `
+            <li>
+              <strong>${escapeHtml(reason.title)}</strong>
+              <p>${escapeHtml(reason.explanation)}</p>
+            </li>
+          `,
+        )
+        .join("")}
+    </ol>
+  `;
+}
+
+function presentationSourceList(sources) {
+  const items = sources.slice(0, 4);
+  if (items.length === 0) {
+    return `<div class="presentation-empty-card">표시할 근거 자료가 없습니다.</div>`;
+  }
+  return `
+    <div class="presentation-card-stack">
+      ${items
+        .map(
+          (source) => `
+            <div>
+              <strong>#${source.id} ${escapeHtml(source.title)}</strong>
+              <p>${escapeHtml(source.publisher)} · ${escapeHtml(formatTime(source.published_at))}</p>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function presentationNewsList(newsTimeline) {
+  const items = newsTimeline.slice(0, 4);
+  if (items.length === 0) {
+    return `<div class="presentation-empty-card">표시할 뉴스 흐름이 없습니다.</div>`;
+  }
+  return `
+    <div class="presentation-card-stack">
+      ${items
+        .map(
+          (news) => `
+            <div>
+              <strong>${escapeHtml(news.title)}</strong>
+              <p>${escapeHtml(news.publisher)} · ${escapeHtml(formatTime(news.published_at))}</p>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function presentationRelatedList(relatedStocks) {
+  const items = relatedStocks.slice(0, 4);
+  if (items.length === 0) {
+    return `<div class="presentation-empty-card">관련 종목이 없습니다.</div>`;
+  }
+  return `
+    <div class="presentation-card-stack">
+      ${items
+        .map(
+          (stock) => `
+            <button type="button" data-presentation-ticker="${escapeHtml(stock.ticker)}">
+              <strong>${escapeHtml(stock.name)} <span>${escapeHtml(stock.ticker)}</span></strong>
+              <p>${escapeHtml(stock.reason || stock.theme || "")}</p>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function presentationTermList(terms) {
+  const items = terms.slice(0, 5);
+  if (items.length === 0) {
+    return `<div class="presentation-empty-card">감지된 용어가 없습니다.</div>`;
+  }
+  return `
+    <div class="presentation-card-stack">
+      ${items
+        .map((item) => {
+          const detail = [item.definition, item.why_it_matters, item.explanation].filter(Boolean).join(" ");
+          return `
+            <div>
+              <strong>${escapeHtml(item.term)}</strong>
+              <p>${escapeHtml(detail)}</p>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function openPresentationMode() {
+  state.presentationOpen = true;
+  state.presentationStep = 0;
+  nodes.presentationStage.dataset.presentationKey = "";
+  nodes.presentationOverlay.hidden = false;
+  document.body.classList.add("presentation-active");
+  renderPresentation();
+}
+
+function setPresentationStep(step) {
+  const { steps } = buildPresentationModel();
+  state.presentationStep = Math.min(Math.max(step, 0), steps.length - 1);
+  renderPresentation();
+}
+
+function renderPresentation() {
+  const model = buildPresentationModel();
+  const steps = model.steps;
+  const currentStep = steps[state.presentationStep] || steps[0];
+  nodes.presentationCounter.textContent = `${state.presentationStep + 1} / ${steps.length}`;
+  nodes.presentationStepLabel.textContent = currentStep.label;
+
+  if (nodes.presentationStage.dataset.presentationKey !== model.key) {
+    nodes.presentationStage.innerHTML = model.html;
+    nodes.presentationStage.dataset.presentationKey = model.key;
+  }
+
+  nodes.presentationPrev.disabled = state.presentationStep === 0;
+  nodes.presentationNext.disabled = state.presentationStep === steps.length - 1;
+  nodes.presentationDots.innerHTML = steps
+    .map(
+      (_, index) => `
+        <button
+          type="button"
+          aria-label="${index + 1}단계"
+          aria-current="${index === state.presentationStep ? "true" : "false"}"
+          data-presentation-step="${index}"
+        ></button>
+      `,
+    )
+    .join("");
+
+  nodes.presentationDots.querySelectorAll("[data-presentation-step]").forEach((button) => {
+    button.addEventListener("click", () => setPresentationStep(Number(button.dataset.presentationStep)));
+  });
+  nodes.presentationStage.querySelectorAll("[data-presentation-card]").forEach((card) => {
+    card.classList.toggle("is-active", card.dataset.presentationCard === String(currentStep.card));
+  });
+  nodes.presentationStage.querySelectorAll("[data-presentation-ticker]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closePresentationMode();
+      selectStockBriefing(button.dataset.presentationTicker);
+    });
+  });
+
+  applyPresentationTransform(currentStep.view);
+}
+
+function applyPresentationTransform(view) {
+  const viewport = nodes.presentationStage.querySelector(".presentation-viewport");
+  const canvas = nodes.presentationStage.querySelector(".presentation-canvas");
+  if (!viewport || !canvas) return;
+
+  const rect = viewport.getBoundingClientRect();
+  const scale = rect.width < 760 ? view.mobileScale || Math.min(view.scale, 0.52) : view.scale;
+  const x = rect.width / 2 - view.x * scale;
+  const y = rect.height / 2 - view.y * scale;
+
+  canvas.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+}
+
+function buildPresentationModel() {
+  if (!state.detail) {
+    return {
+      key: "empty",
+      steps: [
+        {
+          label: "준비",
+          card: 0,
+          view: { x: 430, y: 280, scale: 0.95, mobileScale: 0.5 },
+        },
+      ],
+      html: `
+        <div class="presentation-viewport">
+          <div class="presentation-canvas presentation-canvas-empty">
+            <article class="presentation-card presentation-card-empty" data-presentation-card="0" style="left: 80px; top: 80px; width: 700px;">
+              <span class="presentation-node-index">00</span>
+              <p class="presentation-kicker">WhyStock briefing</p>
+              <h2>먼저 종목을 선택해 주세요</h2>
+              <p class="presentation-summary">왼쪽 목록에서 종목을 고르거나 채팅창에 종목명 또는 코드를 입력하면 발표 모드가 해당 브리핑을 큰 화면 이동 방식으로 정리합니다.</p>
+            </article>
+          </div>
+        </div>
+      `,
+    };
+  }
+
+  const detail = state.detail;
+  const event = detail.event || {};
+  const stock = detail.stock || {};
+  const analysis = detail.analysis || {};
+  const sources = detail.sources || [];
+  const newsTimeline = detail.news_timeline || [];
+  const relatedStocks = detail.related_stocks || [];
+  const terms = detail.terms || [];
+  const reasons = analysis.reasons || [];
+  const changeClass = Number(event.change_rate) >= 0 ? "up" : "down";
+  const title = `${stock.name || "-"} 브리핑`;
+  const basisLabel = detail.data_basis?.label || `${sources.length}건`;
+  const key = [
+    stock.ticker,
+    event.current_price,
+    event.change_rate,
+    event.volume_change_rate,
+    sources.length,
+    newsTimeline.length,
+    relatedStocks.length,
+    terms.length,
+    reasons.length,
+  ].join(":");
+
+  return {
+    key,
+    steps: [
+      { label: "전체 지도", card: 0, view: { x: 1060, y: 900, scale: 0.42, mobileScale: 0.22 } },
+      { label: "종목 요약", card: 1, view: { x: 430, y: 315, scale: 0.95, mobileScale: 0.48 } },
+      { label: "가격 반응", card: 2, view: { x: 1240, y: 330, scale: 1.02, mobileScale: 0.48 } },
+      { label: "원인 정리", card: 3, view: { x: 620, y: 915, scale: 0.82, mobileScale: 0.43 } },
+      { label: "근거 자료", card: 4, view: { x: 1500, y: 955, scale: 0.78, mobileScale: 0.42 } },
+      { label: "함께 볼 것", card: 5, view: { x: 1060, y: 1520, scale: 0.82, mobileScale: 0.43 } },
+    ],
+    html: `
+      <div class="presentation-viewport">
+        <div class="presentation-canvas">
+          <div class="presentation-map-label" style="left: 78px; top: 30px;">WhyStock camera map</div>
+          <article class="presentation-card presentation-overview-card" data-presentation-card="1" style="left: 80px; top: 90px; width: 700px;">
+            <span class="presentation-node-index">01</span>
+            <p class="presentation-kicker">${escapeHtml(stock.market || "Stock")} · ${escapeHtml(stock.ticker || "-")}</p>
+            <h2>${escapeHtml(title)}</h2>
+            <div class="presentation-metrics">
+              <div><span>현재가</span><strong>${escapeHtml(formatPrice(event.current_price))}</strong></div>
+              <div><span>변동률</span><strong class="${changeClass}">${escapeHtml(formatPercent(event.change_rate))}</strong></div>
+              <div><span>거래량 변화</span><strong>${escapeHtml(formatPercent(event.volume_change_rate))}</strong></div>
+            </div>
+            <p class="presentation-summary">${escapeHtml(analysis.summary || "아직 분석 요약이 없습니다.")}</p>
+          </article>
+
+          <article class="presentation-card presentation-price-card" data-presentation-card="2" style="left: 940px; top: 120px; width: 600px;">
+            <span class="presentation-node-index">02</span>
+            <p class="presentation-kicker">Price action</p>
+            <h2>가격과 거래량이 먼저 보여주는 신호</h2>
+            <div class="presentation-split">
+              <div class="presentation-focus ${changeClass}">
+                <span>등락률</span>
+                <strong>${escapeHtml(formatPercent(event.change_rate))}</strong>
+              </div>
+              <div class="presentation-facts">
+                <div><span>거래량 변화</span><strong>${escapeHtml(formatPercent(event.volume_change_rate))}</strong></div>
+                <div><span>자료 기준</span><strong>${escapeHtml(basisLabel)}</strong></div>
+                <div><span>감지 시각</span><strong>${escapeHtml(formatTime(event.detected_at))}</strong></div>
+              </div>
+            </div>
+            <p class="presentation-note">${escapeHtml(detail.data_basis?.note || "가격, 거래량, 뉴스, 공시 자료를 함께 확인해 해석합니다.")}</p>
+          </article>
+
+          <article class="presentation-card presentation-reasons-card" data-presentation-card="3" style="left: 250px; top: 680px; width: 740px;">
+            <span class="presentation-node-index">03</span>
+            <p class="presentation-kicker">Why it moved</p>
+            <h2>핵심 원인 후보</h2>
+            ${presentationReasonList(reasons)}
+          </article>
+
+          <article class="presentation-card presentation-evidence-card" data-presentation-card="4" style="left: 1130px; top: 680px; width: 740px;">
+            <span class="presentation-node-index">04</span>
+            <p class="presentation-kicker">Evidence</p>
+            <h2>확인한 뉴스와 공시</h2>
+            <div class="presentation-two-column">
+              <div>
+                <h3>근거 자료</h3>
+                ${presentationSourceList(sources)}
+              </div>
+              <div>
+                <h3>뉴스 흐름</h3>
+                ${presentationNewsList(newsTimeline)}
+              </div>
+            </div>
+          </article>
+
+          <article class="presentation-card presentation-next-card" data-presentation-card="5" style="left: 700px; top: 1310px; width: 720px;">
+            <span class="presentation-node-index">05</span>
+            <p class="presentation-kicker">Next checks</p>
+            <h2>관련 종목과 용어</h2>
+            <div class="presentation-two-column">
+              <div>
+                <h3>관련 종목</h3>
+                ${presentationRelatedList(relatedStocks)}
+              </div>
+              <div>
+                <h3>감지된 용어</h3>
+                ${presentationTermList(terms)}
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    `,
+  };
+}
+
 async function rerunAnalysis() {
   if (!state.selectedEventId) return;
   nodes.analyzeButton.disabled = true;
@@ -472,41 +963,69 @@ async function rerunAnalysis() {
   }
 }
 
-async function searchStocks() {
-  const query = nodes.stockSearch.value.trim();
-  if (!query) {
-    nodes.searchResults.innerHTML = "";
+async function submitAssistantQuestion(event) {
+  event?.preventDefault();
+  const message = nodes.assistantInput.value.trim();
+  if (!message) {
+    nodes.assistantAnswer.hidden = false;
+    nodes.assistantAnswer.textContent = "질문을 입력해 주세요.";
     return;
   }
 
-  nodes.searchResults.innerHTML = `<div class="empty">검색 중...</div>`;
-  const data = await fetchJson(`/api/stocks/search?query=${encodeURIComponent(query)}`);
-  nodes.searchResults.innerHTML = "";
+  nodes.assistantSubmit.disabled = true;
+  nodes.assistantAnswer.hidden = false;
+  nodes.assistantAnswer.textContent = "답변을 준비하는 중입니다.";
 
-  if (data.stocks.length === 0) {
-    nodes.searchResults.innerHTML = `<div class="empty">검색 결과 없음</div>`;
-    return;
+  try {
+    const data = await fetchJson("/api/assistant/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    renderAssistantAnswer(data);
+    if (data.intent === "stock_briefing" && data.stock?.ticker) {
+      await selectStockBriefing(data.stock.ticker);
+    }
+  } catch (error) {
+    console.error("Failed to ask assistant", error);
+    nodes.assistantAnswer.textContent = "답변을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+  } finally {
+    nodes.assistantSubmit.disabled = false;
   }
+}
 
-  data.stocks.forEach((stock) => {
-    const match = state.allEvents.find((event) => event.ticker === stock.ticker);
+function renderAssistantAnswer(data) {
+  const answer = document.createElement("div");
+  answer.className = "assistant-answer-body";
+
+  const heading = document.createElement("strong");
+  heading.textContent = intentLabel(data.intent);
+  const text = document.createElement("p");
+  text.textContent = data.answer || "답변이 없습니다.";
+
+  answer.append(heading, text);
+
+  if (data.stock?.ticker && data.intent === "related_stocks") {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "search-result";
-    button.innerHTML = `
-      <strong>${escapeHtml(stock.name)} · ${escapeHtml(stock.ticker)}</strong>
-      <span>${escapeHtml(stock.market)} · ${escapeHtml(stock.sector)} · ${match ? "급등락 이벤트" : "종목 브리핑"}</span>
-    `;
-    button.addEventListener("click", () => {
-      nodes.stockSearch.value = stock.name;
-      if (match) {
-        selectEvent(match.id);
-      } else {
-        selectStockBriefing(stock.ticker);
-      }
-    });
-    nodes.searchResults.appendChild(button);
-  });
+    button.className = "assistant-link-button";
+    button.textContent = `${data.stock.name} 브리핑 보기`;
+    button.addEventListener("click", () => selectStockBriefing(data.stock.ticker));
+    answer.appendChild(button);
+  }
+
+  nodes.assistantAnswer.replaceChildren(answer);
+}
+
+function intentLabel(intent) {
+  const labels = {
+    stock_briefing: "종목 브리핑",
+    market_summary: "시장 요약",
+    term_explanation: "용어 설명",
+    related_stocks: "관련 종목",
+    unsupported: "지원 범위",
+  };
+  return labels[intent] || "답변";
 }
 
 async function refreshSelectedDetail() {
@@ -527,14 +1046,6 @@ async function fetchJson(url, options = {}) {
     throw new Error(`Request failed: ${response.status}`);
   }
   return response.json();
-}
-
-function debounce(callback, delay) {
-  let timer = 0;
-  return (...args) => {
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => callback(...args), delay);
-  };
 }
 
 function formatPercent(value) {

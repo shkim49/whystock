@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "source_type": "news",
+    "source_type_label": "뉴스",
+    "title": "삼성전자, 반도체 수요 회복 기대감",
+    "excerpt": "반도체 업황 개선 기대가 이어진다.",
+    "url": "https://example.com/news/1"
+  },
+  {
+    "id": 2,
+    "source_type": "price",
+    "source_type_label": "시세",
+    "title": "삼성전자 네이버페이 증권 시세",
+    "excerpt": "거래량이 확대됐다.",
+    "url": "https://example.com/price/1"
+  }
+]

@@ -16,6 +16,7 @@
         </span>
       </a>
       <div class="topbar-meta">
+        <button id="presentationButton" class="presentation-toggle" type="button">발표 모드</button>
         <span id="runtimeBadge" class="status-pill">live market</span>
         <span id="asOfText">loading</span>
       </div>
@@ -28,28 +29,29 @@
           <span id="eventCount">0</span>
         </div>
 
-        <label class="search">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m21 21-4.35-4.35m1.35-5.15a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" />
-          </svg>
-          <input id="stockSearch" type="search" placeholder="종목명 또는 코드 검색" autocomplete="off" />
-        </label>
+        <section class="assistant-box" aria-label="AI 질문">
+          <form id="assistantForm" class="assistant-form">
+            <input
+              id="assistantInput"
+              type="text"
+              placeholder="삼성전자 오늘 왜 움직였어?"
+              autocomplete="off"
+            />
+            <button id="assistantSubmit" type="submit">질문</button>
+          </form>
+          <div id="assistantAnswer" class="assistant-answer" aria-live="polite" hidden></div>
+        </section>
 
-        <div id="searchResults" class="search-results" aria-live="polite"></div>
         <div id="moverList" class="mover-list"></div>
       </aside>
 
       <section class="workspace" aria-live="polite">
-        <div class="visual-band">
-          <div>
-            <p class="eyebrow">Movement event analysis</p>
+        <div class="quote-board">
+          <div class="quote-title">
+            <p class="eyebrow">Stock briefing</p>
             <h2 id="eventTitle">이벤트를 불러오는 중</h2>
             <p id="eventSubtitle" class="subtitle"></p>
           </div>
-          <img id="brandVisual" src="/assets/generated/why-stock-hero.svg" alt="WhyStock analysis dashboard visual" />
-        </div>
-
-        <div class="metric-row">
           <div class="metric">
             <span>현재가</span>
             <strong id="currentPrice">-</strong>
@@ -94,12 +96,6 @@
           <section class="panel insight-panel">
             <section class="mini-section">
               <div class="panel-head">
-                <h3>재료 태그</h3>
-              </div>
-              <div id="materialTagList" class="material-tag-list"></div>
-            </section>
-            <section class="mini-section">
-              <div class="panel-head">
                 <h3>뉴스 타임라인</h3>
               </div>
               <div id="newsTimelineList" class="timeline-list"></div>
@@ -140,6 +136,24 @@
         <p class="disclaimer" id="disclaimerText">투자 추천이 아닌 정보 요약입니다.</p>
       </section>
     </main>
+
+    <section id="presentationOverlay" class="presentation-overlay" role="dialog" aria-modal="true" aria-label="발표 모드" hidden>
+      <div class="presentation-shell">
+        <div class="presentation-top">
+          <div>
+            <span id="presentationCounter" class="presentation-counter">1 / 5</span>
+            <strong id="presentationStepLabel">한눈에 보기</strong>
+          </div>
+          <button id="presentationClose" class="presentation-close" type="button">닫기</button>
+        </div>
+        <div id="presentationStage" class="presentation-stage"></div>
+        <div class="presentation-controls">
+          <button id="presentationPrev" type="button">이전</button>
+          <div id="presentationDots" class="presentation-dots" aria-label="발표 단계"></div>
+          <button id="presentationNext" type="button">다음</button>
+        </div>
+      </div>
+    </section>
 
     <script src="/app.js" defer></script>
   </body>

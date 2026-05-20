@@ -1,0 +1,13 @@
+{
+  "itemCode": "005930",
+  "stockName": "삼성전자",
+  "stockExchangeName": "KOSPI",
+  "endUrl": "https://m.stock.naver.com/domestic/stock/005930",
+  "closePrice": "73,500",
+  "fluctuationsRatio": "2.15",
+  "accumulatedTradingVolume": "15,201,334",
+  "accumulatedTradingValue": "1120345000000",
+  "marketValue": "438780000000000",
+  "localTradedAt": "2026-05-20T10:15:00+09:00",
+  "stockEndType": "stock"
+}

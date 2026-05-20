@@ -1,0 +1,16 @@
+{
+  "summary": "무조건 오를 것이므로 지금 매수해야 합니다.",
+  "reasons": [
+    {
+      "title": "매수 추천",
+      "importance": 1,
+      "evidence_source_ids": [1],
+      "explanation": "지금 사야 합니다."
+    }
+  ],
+  "market_reaction": {
+    "price_change": "+1.0%",
+    "volume_change": "+2.0%"
+  },
+  "disclaimer": "투자 추천은 아닙니다."
+}
