@@ -9,10 +9,13 @@ from typing import Any
 
 from config import WEB_DIR
 from services.assistant_service import assistant_chat
+from services.auth_service import bearer_token, login_user, logout_token, signup_user, user_from_authorization
 from services.briefing_service import detail_for_ticker
 from services.market_service import movers_payload, search_stocks, ticker_from_event_id
 from services.term_service import TERM_EXPLANATIONS
 from utils import now_iso
+
+
 class WhyStockHandler(BaseHTTPRequestHandler):
     server_version = "WhyStock/2.0"
 
@@ -20,7 +23,7 @@ class WhyStockHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self) -> None:
@@ -30,6 +33,14 @@ class WhyStockHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/health":
                 self.send_json({"ok": True, "service": "WhyStock", "time": now_iso()})
+            elif path == "/api/auth/me":
+                user = self.current_user()
+                if user is None:
+                    self.send_json({"error": "unauthorized"}, status=401)
+                else:
+                    self.send_json({"user": user})
+            elif path.startswith("/api/") and not self.require_auth():
+                return
             elif path == "/api/events/movers":
                 force_refresh = query.get("refresh", ["0"])[0] == "1"
                 self.send_json(movers_payload(force_refresh=force_refresh))
@@ -67,7 +78,18 @@ class WhyStockHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         try:
-            if path == "/api/assistant/chat":
+            if path == "/api/auth/signup":
+                response, status = signup_user(self.read_json_body())
+                self.send_json(response, status=status)
+            elif path == "/api/auth/login":
+                response, status = login_user(self.read_json_body())
+                self.send_json(response, status=status)
+            elif path == "/api/auth/logout":
+                logout_token(bearer_token(self.headers.get("Authorization")))
+                self.send_json({"ok": True})
+            elif path.startswith("/api/") and not self.require_auth():
+                return
+            elif path == "/api/assistant/chat":
                 response, status = assistant_chat(self.read_json_body())
                 self.send_json(response, status=status)
             elif match := re.fullmatch(r"/api/events/([^/]+)/analyze", path):
@@ -97,6 +119,17 @@ class WhyStockHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def current_user(self) -> dict[str, Any] | None:
+        if not hasattr(self, "_current_user"):
+            self._current_user = user_from_authorization(self.headers.get("Authorization"))
+        return self._current_user
+
+    def require_auth(self) -> bool:
+        if self.current_user() is not None:
+            return True
+        self.send_json({"error": "unauthorized"}, status=401)
+        return False
 
     def serve_static(self, path: str) -> None:
         requested = urllib.parse.unquote(path.lstrip("/")) or "index.html"

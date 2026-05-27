@@ -41,6 +41,26 @@ CREATE TABLE sources (
 );
 """
 
+USERS_SCHEMA = """
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT
+);
+"""
+
+SESSIONS_SCHEMA = """
+CREATE TABLE sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+"""
+
 EXPECTED_COLUMNS = {
     "analyses": {
         "event_id",
@@ -66,6 +86,20 @@ EXPECTED_COLUMNS = {
         "source_json",
         "created_at",
         "updated_at",
+    },
+    "users": {
+        "id",
+        "email",
+        "password_hash",
+        "created_at",
+        "updated_at",
+        "last_login_at",
+    },
+    "sessions": {
+        "token_hash",
+        "user_id",
+        "created_at",
+        "expires_at",
     },
 }
 
@@ -97,6 +131,9 @@ def init_db(db_path: Path = DB_PATH) -> None:
     with closing(get_connection(db_path)) as connection:
         _ensure_table_schema(connection, "analyses", ANALYSES_SCHEMA)
         _ensure_table_schema(connection, "sources", SOURCES_SCHEMA)
+        _ensure_table_schema(connection, "users", USERS_SCHEMA)
+        _ensure_table_schema(connection, "sessions", SESSIONS_SCHEMA)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
         connection.commit()
 
 

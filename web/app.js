@@ -4,6 +4,11 @@ const state = {
   selectedEventId: null,
   detail: null,
   watchlist: [],
+  authToken: "",
+  currentUser: null,
+  authMode: "login",
+  refreshTimers: [],
+  appStarted: false,
   presentationOpen: false,
   presentationStep: 0,
 };
@@ -11,12 +16,25 @@ const state = {
 const MOVERS_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MS = 60 * 1000;
 const WATCHLIST_KEY = "whystock.watchlist";
+const AUTH_TOKEN_KEY = "whystock.authToken";
 const nodes = {};
 
 document.addEventListener("DOMContentLoaded", () => {
   [
     "runtimeBadge",
     "asOfText",
+    "authOverlay",
+    "authForm",
+    "authEmail",
+    "authPassword",
+    "authSubmit",
+    "authStatus",
+    "authLoginTab",
+    "authSignupTab",
+    "authModeTitle",
+    "authModeCopy",
+    "authUserEmail",
+    "logoutButton",
     "eventCount",
     "assistantForm",
     "assistantInput",
@@ -55,24 +73,14 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   bindEvents();
-  loadWatchlist();
-  loadMovers({ forceRefresh: true }).catch((error) => {
-    console.error("Failed to load mover events", error);
-    showError("이벤트 정보를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-  });
-  setInterval(() => {
-    loadMovers({ preserveSelection: true, silent: true }).catch((error) => {
-      console.error("Failed to refresh mover events", error);
-    });
-  }, MOVERS_REFRESH_INTERVAL_MS);
-  setInterval(() => {
-    refreshSelectedDetail().catch((error) => {
-      console.error("Failed to refresh selected detail", error);
-    });
-  }, LIVE_DETAIL_REFRESH_INTERVAL_MS);
+  initializeAuth();
 });
 
 function bindEvents() {
+  nodes.authForm.addEventListener("submit", submitAuthForm);
+  nodes.authLoginTab.addEventListener("click", () => setAuthMode("login"));
+  nodes.authSignupTab.addEventListener("click", () => setAuthMode("signup"));
+  nodes.logoutButton.addEventListener("click", logout);
   nodes.analyzeButton.addEventListener("click", rerunAnalysis);
   nodes.watchButton.addEventListener("click", toggleCurrentWatch);
   nodes.assistantForm.addEventListener("submit", submitAssistantQuestion);
@@ -86,6 +94,156 @@ function bindEvents() {
       renderPresentation();
     }
   });
+}
+
+async function initializeAuth() {
+  setAuthMode("login");
+  state.authToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  if (!state.authToken) {
+    showAuth();
+    return;
+  }
+
+  try {
+    const data = await fetchJson("/api/auth/me");
+    setAuthenticated(data.user, state.authToken);
+    startApp();
+  } catch (error) {
+    console.warn("Stored auth token is no longer valid", error);
+    clearAuthState();
+    showAuth("다시 로그인해 주세요.");
+  }
+}
+
+function startApp() {
+  if (state.appStarted) {
+    loadWatchlist();
+    return;
+  }
+  state.appStarted = true;
+  loadWatchlist();
+  loadMovers({ forceRefresh: true }).catch((error) => {
+    console.error("Failed to load mover events", error);
+    showError("이벤트 정보를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  });
+  state.refreshTimers.push(
+    setInterval(() => {
+      loadMovers({ preserveSelection: true, silent: true }).catch((error) => {
+        console.error("Failed to refresh mover events", error);
+      });
+    }, MOVERS_REFRESH_INTERVAL_MS),
+  );
+  state.refreshTimers.push(
+    setInterval(() => {
+      refreshSelectedDetail().catch((error) => {
+        console.error("Failed to refresh selected detail", error);
+      });
+    }, LIVE_DETAIL_REFRESH_INTERVAL_MS),
+  );
+}
+
+function stopAppTimers() {
+  state.refreshTimers.forEach((timerId) => clearInterval(timerId));
+  state.refreshTimers = [];
+  state.appStarted = false;
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  const isSignup = mode === "signup";
+  nodes.authLoginTab.setAttribute("aria-pressed", isSignup ? "false" : "true");
+  nodes.authSignupTab.setAttribute("aria-pressed", isSignup ? "true" : "false");
+  nodes.authModeTitle.textContent = isSignup ? "이메일로 회원가입" : "로그인";
+  nodes.authModeCopy.textContent = isSignup
+    ? "이름이나 전화번호 없이 이메일 계정만으로 가입할 수 있습니다."
+    : "이메일 계정으로 로그인하고 관심종목을 이어서 확인하세요.";
+  nodes.authSubmit.textContent = isSignup ? "회원가입" : "로그인";
+  nodes.authPassword.autocomplete = isSignup ? "new-password" : "current-password";
+  nodes.authStatus.textContent = "";
+}
+
+function showAuth(message = "") {
+  nodes.authOverlay.hidden = false;
+  nodes.authStatus.textContent = message;
+  nodes.authUserEmail.hidden = true;
+  nodes.logoutButton.hidden = true;
+}
+
+function hideAuth() {
+  nodes.authOverlay.hidden = true;
+  nodes.authStatus.textContent = "";
+}
+
+function setAuthenticated(user, token) {
+  state.currentUser = user;
+  state.authToken = token;
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  nodes.authUserEmail.textContent = user?.email || "";
+  nodes.authUserEmail.hidden = !user?.email;
+  nodes.logoutButton.hidden = false;
+  hideAuth();
+}
+
+function clearAuthState() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  state.authToken = "";
+  state.currentUser = null;
+  state.watchlist = [];
+  nodes.authUserEmail.textContent = "";
+  nodes.authUserEmail.hidden = true;
+  nodes.logoutButton.hidden = true;
+}
+
+async function submitAuthForm(event) {
+  event.preventDefault();
+  const email = nodes.authEmail.value.trim();
+  const password = nodes.authPassword.value;
+  if (!email || !password) {
+    nodes.authStatus.textContent = "이메일과 비밀번호를 입력해 주세요.";
+    return;
+  }
+
+  nodes.authSubmit.disabled = true;
+  nodes.authStatus.textContent = state.authMode === "signup" ? "회원가입 중입니다." : "로그인 중입니다.";
+  try {
+    const data = await fetchJson(`/api/auth/${state.authMode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    setAuthenticated(data.user, data.token);
+    nodes.authForm.reset();
+    startApp();
+  } catch (error) {
+    nodes.authStatus.textContent = authErrorMessage(error);
+  } finally {
+    nodes.authSubmit.disabled = false;
+  }
+}
+
+function authErrorMessage(error) {
+  const code = error?.data?.error;
+  if (code === "invalid_email") return "올바른 이메일 주소를 입력해 주세요.";
+  if (code === "weak_password") return "비밀번호는 8자 이상이어야 합니다.";
+  if (code === "email_exists") return "이미 가입된 이메일입니다. 로그인해 주세요.";
+  if (code === "invalid_credentials") return "이메일 또는 비밀번호가 맞지 않습니다.";
+  return "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+async function logout() {
+  try {
+    await fetchJson("/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch (error) {
+    console.warn("Logout request failed", error);
+  } finally {
+    stopAppTimers();
+    clearAuthState();
+    showAuth("로그아웃되었습니다.");
+  }
 }
 
 async function loadMovers(options = {}) {
@@ -359,7 +517,7 @@ function renderRelated(relatedStocks) {
 
 function loadWatchlist() {
   try {
-    state.watchlist = JSON.parse(localStorage.getItem(WATCHLIST_KEY) || "[]");
+    state.watchlist = JSON.parse(localStorage.getItem(watchlistStorageKey()) || "[]");
   } catch {
     state.watchlist = [];
   }
@@ -367,7 +525,11 @@ function loadWatchlist() {
 }
 
 function saveWatchlist() {
-  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(state.watchlist));
+  localStorage.setItem(watchlistStorageKey(), JSON.stringify(state.watchlist));
+}
+
+function watchlistStorageKey() {
+  return state.currentUser?.email ? `${WATCHLIST_KEY}.${state.currentUser.email}` : WATCHLIST_KEY;
 }
 
 function toggleCurrentWatch() {
@@ -1041,11 +1203,24 @@ async function refreshSelectedDetail() {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+  const headers = new Headers(options.headers || {});
+  if (state.authToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${state.authToken}`);
   }
-  return response.json();
+  const response = await fetch(url, { ...options, headers });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(`Request failed: ${response.status}`);
+    error.status = response.status;
+    error.data = data;
+    if (response.status === 401 && !url.startsWith("/api/auth/")) {
+      stopAppTimers();
+      clearAuthState();
+      showAuth("로그인이 필요합니다.");
+    }
+    throw error;
+  }
+  return data;
 }
 
 function formatPercent(value) {

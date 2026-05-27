@@ -19,8 +19,36 @@
         <button id="presentationButton" class="presentation-toggle" type="button">발표 모드</button>
         <span id="runtimeBadge" class="status-pill">live market</span>
         <span id="asOfText">loading</span>
+        <span id="authUserEmail" class="auth-user" hidden></span>
+        <button id="logoutButton" class="auth-logout" type="button" hidden>로그아웃</button>
       </div>
     </header>
+
+    <section id="authOverlay" class="auth-overlay" aria-label="로그인" hidden>
+      <div class="auth-card">
+        <div>
+          <p class="eyebrow">WhyStock account</p>
+          <h1 id="authModeTitle">로그인</h1>
+          <p id="authModeCopy">이메일 계정으로 로그인하고 관심종목을 이어서 확인하세요.</p>
+        </div>
+        <div class="auth-tabs" role="tablist" aria-label="인증 방식">
+          <button id="authLoginTab" type="button" aria-pressed="true">로그인</button>
+          <button id="authSignupTab" type="button" aria-pressed="false">회원가입</button>
+        </div>
+        <form id="authForm" class="auth-form">
+          <label>
+            이메일
+            <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
+          </label>
+          <label>
+            비밀번호
+            <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
+          </label>
+          <button id="authSubmit" type="submit">로그인</button>
+          <p id="authStatus" class="auth-status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
 
     <main class="layout">
       <aside class="sidebar" aria-label="급등락 이벤트">
